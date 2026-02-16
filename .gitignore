@@ -1,0 +1,29 @@
+# Virtual environments
+.venv/
+venv/
+
+# API keys
+.env
+
+# Pipeline working data
+data/
+output/
+runs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Source contracts (large, private data)
+contracts/
+
+# Archives
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db

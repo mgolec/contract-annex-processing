@@ -1,0 +1,63 @@
+# ============================================================================
+# Pipeline za ugovore — konfiguracija
+# Contract Pipeline — Configuration
+# ============================================================================
+# Kopirajte ovu datoteku kao "pipeline.toml" i prilagodite vrijednosti.
+# Copy this file as "pipeline.toml" and adjust the values.
+# ============================================================================
+
+[general]
+# Naziv tvrtke davatelja usluge / Service provider company name
+company_name = "Procudo d.o.o."
+
+# OIB davatelja usluge / Service provider tax ID
+company_oib = "78127426216"
+
+# Adresa davatelja usluge / Service provider address
+company_address = "Fallerovo šetalište 22, 10000 Zagreb"
+
+# Direktor davatelja usluge / Service provider director
+company_director = "Bruno Bardić"
+
+# Mjesto potpisa / Signing location
+default_location = "Zagreb"
+
+[paths]
+# Putanja do mape s ugovorima klijenata / Path to client contracts folder
+# Može biti apsolutna ili relativna putanja / Can be absolute or relative path
+source = "./contracts"
+
+# Radna mapa (automatski se kreira) / Working directory (created automatically)
+working_dir = "./data"
+
+# Mapa za izlazne datoteke / Output directory
+output_dir = "./output"
+
+# Predložak za aneks / Annex template
+template = "./templates/default/aneks_template.docx"
+
+[extraction]
+# Claude AI model za ekstrakciju / Claude AI model for extraction
+model = "claude-sonnet-4-5-20250929"
+
+# Koristi Batch API (50% jeftinije, traje ~30 min) / Use Batch API (50% cheaper, ~30 min)
+use_batch_api = true
+
+# Minimalna razina pouzdanosti / Minimum confidence threshold
+# Opcije / Options: "high", "medium", "low"
+confidence_threshold = "medium"
+
+[currency]
+# Fiksni tečaj HRK → EUR (po CNB) / Fixed HRK → EUR rate (per CNB)
+hrk_to_eur_rate = 7.53450
+
+# Zadana valuta za nove cijene / Default currency for new prices
+default_currency = "EUR"
+
+[generation]
+# Datum stupanja na snagu novih cijena / Effective date for new prices
+# Format: YYYY-MM-DD
+default_effective_date = "2026-03-01"
+
+# Napomena o PDV-u / VAT note
+vat_note = "Sve cijene su izražene bez PDV-a."

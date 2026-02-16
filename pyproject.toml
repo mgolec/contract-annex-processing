@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "doc-pipeline"
+version = "0.1.0"
+description = "Contract price adjustment pipeline for Croatian-language legal documents"
+requires-python = ">=3.9"
+dependencies = [
+    "python-docx==1.1.2",
+    "docx2python>=2.0",
+    "pdfplumber>=0.9",
+    "docxtpl>=0.16",
+    "openpyxl>=3.1.5",
+    "anthropic",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "typer[all]>=0.9",
+    "chardet>=5.0",
+    "thefuzz>=0.22",
+    "python-Levenshtein",
+    "tomli>=1.0;python_version<'3.11'",
+    "eval_type_backport>=0.2;python_version<'3.10'",
+]
+
+[project.scripts]
+pipeline = "doc_pipeline.cli:app"
+pipeline-gui = "doc_pipeline.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

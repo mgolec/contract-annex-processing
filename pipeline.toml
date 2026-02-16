@@ -1,0 +1,25 @@
+[general]
+company_name = "Procudo d.o.o."
+company_oib = "78127426216"
+company_address = "Fallerovo šetalište 22, 10000 Zagreb"
+company_director = "Bruno Bardić"
+default_location = "Zagreb"
+
+[paths]
+source = "./contracts"
+working_dir = "./data"
+output_dir = "./output"
+template = "./templates/default/aneks_template.docx"
+
+[extraction]
+model = "claude-sonnet-4-5-20250929"
+use_batch_api = true
+confidence_threshold = "medium"
+
+[currency]
+hrk_to_eur_rate = 7.53450
+default_currency = "EUR"
+
+[generation]
+default_effective_date = "2026-03-01"
+vat_note = "Sve cijene su izražene bez PDV-a."
