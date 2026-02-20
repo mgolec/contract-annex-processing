@@ -239,10 +239,11 @@ def _build_sheet2(
         "EUR protuvrijednost",
         "Jedinica",
         "Nova cijena EUR",
+        "% povećanja",
         "% promjene",
         "Primjena od",
     ]
-    widths = [25, 40, 18, 10, 20, 15, 18, 14, 15]
+    widths = [25, 40, 18, 10, 20, 15, 18, 14, 14, 15]
     _style_header(ws, headers, widths)
 
     sorted_ext = sorted(extractions, key=lambda e: e.folder_name.lower())
@@ -279,19 +280,26 @@ def _build_sheet2(
             unit = item.unit or item.designation or ""
             _style_cell(ws, row_idx, 6, unit)
 
-            # G: New price EUR (editable)
+            # G: New price EUR (editable — direct price entry)
             _style_cell(ws, row_idx, 7, None, locked=False)
             ws.cell(row=row_idx, column=7).number_format = '#,##0.00'
-            # H: % change (formula, editable column for overrides, wrapped in IFERROR)
+            # H: % increase/decrease (editable — user enters e.g. 5 for +5%, -3 for -3%)
+            _style_cell(ws, row_idx, 8, None, locked=False)
+            ws.cell(row=row_idx, column=8).number_format = '0.00'
+            # I: % change display (formula — shows effective % from whichever input)
+            # If H (percentage) is filled: use H/100 directly
+            # Else if G (direct price) is filled: calculate (G-E)/E
             pct_formula = (
-                f'=IFERROR(IF(AND(G{row_idx}<>"",E{row_idx}>0),'
-                f'(G{row_idx}-E{row_idx})/E{row_idx},""),"")'
+                f'=IFERROR(IF(H{row_idx}<>"",'
+                f'H{row_idx}/100,'
+                f'IF(AND(G{row_idx}<>"",E{row_idx}>0),'
+                f'(G{row_idx}-E{row_idx})/E{row_idx},"")),"")'
             )
-            _style_cell(ws, row_idx, 8, pct_formula, locked=False)
-            ws.cell(row=row_idx, column=8).number_format = '0.00%'
-            # I: Effective date (editable)
-            _style_cell(ws, row_idx, 9, None, locked=False)
-            ws.cell(row=row_idx, column=9).number_format = 'DD.MM.YYYY'
+            _style_cell(ws, row_idx, 9, pct_formula)
+            ws.cell(row=row_idx, column=9).number_format = '0.00%'
+            # J: Effective date (editable)
+            _style_cell(ws, row_idx, 10, None, locked=False)
+            ws.cell(row=row_idx, column=10).number_format = 'DD.MM.YYYY'
 
             row_idx += 1
 
@@ -299,7 +307,7 @@ def _build_sheet2(
 
     # Freeze panes and auto-filter
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:I{last_row}"
+    ws.auto_filter.ref = f"A1:J{last_row}"
 
     # Sheet protection prevents accidental edits only (not encryption).
     # Password "procudo" is intentionally simple — security is not the goal here.

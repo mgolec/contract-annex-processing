@@ -78,7 +78,14 @@ GUI vas vodi kroz 5 koraka / The GUI guides you through 5 steps:
 ### 3. Pregled / Review
 - Otvorite kontrolnu tablicu u Excelu / Open the control spreadsheet in Excel
 - Na Sheet 1: označite klijente kao "Odobreno" / On Sheet 1: mark clients as "Odobreno"
-- Na Sheet 2: unesite nove cijene / On Sheet 2: enter new prices
+- Na Sheet 2: unesite nove cijene na jedan od dva načina:
+  On Sheet 2: enter new prices using one of two methods:
+  - **Stupac G "Nova cijena EUR"** — unesite izravnu novu cijenu u EUR
+    Column G "Nova cijena EUR" — enter a direct new price in EUR
+  - **Stupac H "% povećanja"** — unesite postotak promjene (npr. `5` za +5%, `-3` za -3%)
+    Column H "% povećanja" — enter a percentage change (e.g. `5` for +5%, `-3` for -3%)
+  - Možete koristiti bilo koji način po retku. Ako su oba popunjena, postotak ima prednost.
+    You can use either method per row. If both are filled, percentage takes precedence.
 - Spremite i zatvorite / Save and close
 - Pregledajte ekstrakcije po klijentu u GUI-u / Preview per-client extractions in the GUI
 

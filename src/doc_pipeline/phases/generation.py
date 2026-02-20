@@ -79,7 +79,10 @@ def read_approved_clients(
 
     Sheet 2 "Cijene":
       Col A = client name, Col B = service name,
-      Col G = new price EUR, Col I = effective date
+      Col G = new price EUR (direct), Col H = % increase/decrease,
+      Col J = effective date.
+      If H is filled, new price = EUR_equiv * (1 + H/100).
+      If only G is filled, new price = G. H takes precedence.
 
     Args:
         spreadsheet_path: Path to the control spreadsheet.
@@ -139,6 +142,7 @@ def read_approved_clients(
             1: "Klijent",
             2: "Usluga",
             7: "Nova cijena EUR",
+            8: "% povećanja",
         }
         for col, expected in EXPECTED_HEADERS_S2.items():
             actual = ws2.cell(1, col).value
@@ -167,8 +171,9 @@ def read_approved_clients(
             current_price = row[2].value     # Col C: current price
             currency_cell = row[3].value     # Col D: currency
             eur_equiv = row[4].value         # Col E: EUR equivalent (formula — may be None)
-            new_price = row[6].value         # Col G
-            effective_date = row[8].value    # Col I
+            new_price = row[6].value         # Col G: direct price entry
+            pct_increase = row[7].value      # Col H: % increase/decrease
+            effective_date = row[9].value    # Col J
 
             if not client_name_cell:
                 continue
@@ -184,39 +189,75 @@ def read_approved_clients(
 
             if folder is None or folder not in approved:
                 # H16: Warn about unmatched prices
-                if new_price is not None:
+                if new_price is not None or pct_increase is not None:
                     console.print(
                         f"  [yellow]Upozorenje: nova cijena za '{client_name_str}' "
                         f"ne odgovara nijednom odobrenom klijentu[/yellow]"
                     )
                 continue
 
-            # Skip rows without a new price
-            if new_price is None:
+            # Skip rows without any price input (neither direct nor percentage)
+            if new_price is None and pct_increase is None:
                 continue
 
             # C7: If EUR equivalent cell is None (formula not cached by Excel),
             # compute it in Python as a fallback.
-            if eur_equiv is None and current_price is not None and currency_cell == "HRK":
+            if eur_equiv is None and current_price is not None:
                 hrk_rate_val = Decimal("7.53450")
                 if config is not None:
                     hrk_rate_val = Decimal(str(config.currency.hrk_to_eur_rate))
                 try:
-                    eur_equiv = float(Decimal(str(current_price)) / hrk_rate_val)
+                    if currency_cell == "HRK":
+                        eur_equiv = float(Decimal(str(current_price)) / hrk_rate_val)
+                    else:
+                        eur_equiv = float(current_price)
                 except (TypeError, ValueError, ArithmeticError):
                     pass
 
-            # Parse new price — could be a number or a formatted string
-            if isinstance(new_price, str):
-                from doc_pipeline.utils.croatian import parse_hr_number
-                price_val = parse_hr_number(new_price)
-                if price_val is None:
-                    continue
-            else:
+            # Determine final price: percentage (H) takes precedence over direct (G)
+            price_val: Decimal | None = None
+
+            if pct_increase is not None:
+                # Percentage input — calculate new price from EUR equivalent
                 try:
-                    price_val = Decimal(str(new_price))
+                    pct = Decimal(str(pct_increase))
                 except (TypeError, ValueError, InvalidOperation):
+                    logger.warning(
+                        "Invalid percentage value '%s' for %s / %s — skipping",
+                        pct_increase, client_name_str, service_name,
+                    )
                     continue
+
+                if eur_equiv is None or eur_equiv == 0:
+                    logger.warning(
+                        "Cannot apply percentage for %s / %s — no EUR base price",
+                        client_name_str, service_name,
+                    )
+                    continue
+
+                base = Decimal(str(eur_equiv))
+                price_val = (base * (1 + pct / 100)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                logger.debug(
+                    "Percentage price: %s × (1 + %s%%) = %s for %s / %s",
+                    base, pct, price_val, client_name_str, service_name,
+                )
+            elif new_price is not None:
+                # Direct price input
+                if isinstance(new_price, str):
+                    from doc_pipeline.utils.croatian import parse_hr_number
+                    price_val = parse_hr_number(new_price)
+                    if price_val is None:
+                        continue
+                else:
+                    try:
+                        price_val = Decimal(str(new_price))
+                    except (TypeError, ValueError, InvalidOperation):
+                        continue
+
+            if price_val is None:
+                continue
 
             approved[folder].new_prices.append(
                 NewPrice(
@@ -589,9 +630,9 @@ def _calc_avg_change(
         if old_val is None or old_val == 0:
             continue
         if is_hrk:
-            old_val = _hrk_to_eur(old_val, hrk_rate)
+            old_val = Decimal(str(_hrk_to_eur(old_val, hrk_rate)))
         new_val = approved.new_prices[i].new_price_eur
-        changes.append((new_val - old_val) / old_val * 100)
+        changes.append(float((new_val - old_val) / old_val * 100))
 
     if not changes:
         return "—"
