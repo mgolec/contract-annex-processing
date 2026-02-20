@@ -36,7 +36,7 @@ class PathsConfig(BaseModel):
 
 
 class ExtractionConfig(BaseModel):
-    model: str = "claude-sonnet-4-5-20250929"
+    model: str = "claude-sonnet-4-6-20250514"
     use_batch_api: bool = True
     confidence_threshold: str = "medium"
 

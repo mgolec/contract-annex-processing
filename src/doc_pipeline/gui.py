@@ -1098,7 +1098,7 @@ class PipelineGUI:
                 'template = "./templates/default/aneks_template.docx"',
                 "",
                 "[extraction]",
-                'model = "claude-sonnet-4-5-20250929"',
+                'model = "claude-sonnet-4-6-20250514"',
                 "use_batch_api = true",
                 'confidence_threshold = "medium"',
                 "",
