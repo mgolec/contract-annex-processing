@@ -361,21 +361,56 @@ def _parse_source_document(doc_path: Path) -> SourceDocData:
 
         # ── Hour fund: total hours ──────────────────────────────────
         if not data.ukupno_sati and "fond sati" in text.lower():
+            # Primary: "je NN sati/sata/sat mjesečno"
             m = re.search(r'je\s+(\d+)\s+sat', text)
+            if not m:
+                # Fallback: "je NN" at end of line (next line starts with "sati")
+                m = re.search(r'je\s+(\d+)\s*$', text)
             if m:
                 data.ukupno_sati = m.group(1)
 
-        # ── L1 hours ────────────────────────────────────────────────
-        if not data.l1_sati and "sistem administrator" in text.lower():
-            m = re.search(r'(\d+)\s+sistem\s+administrator', text, re.IGNORECASE)
+        # ── L1 hours (client/workstation hours) ───────────────────
+        # Matches all Croatian terminology variants:
+        #   "5 sistem administrator sata (L1)"
+        #   "6 sistem administrator sati (L1 i L2)"
+        #   "2 klijentska sata"  /  "6 klijentskih sati"
+        if not data.l1_sati:
+            text_lower = text.lower()
+            m = None
+            if "sistem administrator" in text_lower:
+                m = re.search(r'(\d+)\s+sistem\s+administrator', text, re.IGNORECASE)
+            elif "klijentsk" in text_lower:
+                m = re.search(r'(\d+)\s+klijentsk\w*\s+sat', text, re.IGNORECASE)
             if m:
                 data.l1_sati = m.group(1)
 
-        # ── L2 hours ────────────────────────────────────────────────
-        if not data.l2_sati and "sistem inženjer" in text.lower():
-            m = re.search(r'(\d+)\s+sistem\s+inženjer', text, re.IGNORECASE)
+        # ── L2 hours (server/engineer hours) ──────────────────────
+        # Matches all Croatian terminology variants:
+        #   "1 sistem inženjer sat – (L2)"  /  "(L3)"
+        #   "1 poslužiteljski sat"  /  "3 poslužiteljska sata"
+        if not data.l2_sati:
+            text_lower = text.lower()
+            m = None
+            if "sistem inženjer" in text_lower:
+                m = re.search(r'(\d+)\s+sistem\s+inženjer', text, re.IGNORECASE)
+            elif "poslužiteljsk" in text_lower:
+                m = re.search(r'(\d+)\s+poslužiteljsk\w*\s+sat', text, re.IGNORECASE)
             if m:
                 data.l2_sati = m.group(1)
+
+    # ── Fallback: infer missing L1/L2 from total hours ────────────
+    # Some contracts only have total hours with no L1/L2 breakdown.
+    # In that case, assign all hours to L1 and set L2 to 0.
+    if data.ukupno_sati and not data.l1_sati and not data.l2_sati:
+        data.l1_sati = data.ukupno_sati
+        data.l2_sati = "0"
+        logger.debug(
+            "No L1/L2 breakdown found, assigning all %s hours to L1",
+            data.ukupno_sati,
+        )
+    elif data.ukupno_sati and data.l1_sati and not data.l2_sati:
+        # L1 found but no L2 — set L2 to 0 (some contracts only have L1)
+        data.l2_sati = "0"
 
     return data
 
@@ -547,6 +582,54 @@ def build_context(
     # ── Parse source documents for director, address, hours ─────────
     src_data = _parse_best_source_data(extraction, config)
 
+    # ── Fallback: try to recover hours from extraction notes ──────
+    # The Claude extraction often captures hour info in the notes field
+    # (e.g., "Monthly hour allocation: 3 hours total (2 client hours + 1 server hour).")
+    if ex.notes and (not src_data.ukupno_sati or not src_data.l1_sati):
+        notes_text = " ".join(ex.notes) if isinstance(ex.notes, list) else str(ex.notes)
+        # Total hours: "N hours total" or "N hours monthly" or "fund of N hours"
+        if not src_data.ukupno_sati:
+            for pattern in [
+                r'(\d+)\s+hours?\s+total',
+                r'(\d+)\s+hours?\s+monthly',
+                r'(?:fund|allocation)\s+(?:of\s+)?(\d+)\s+hours?',
+                r'includes?\s+(\d+)\s+hours?',
+                r'is\s+(\d+)\s+hours?',
+            ]:
+                m = re.search(pattern, notes_text, re.IGNORECASE)
+                if m:
+                    src_data.ukupno_sati = m.group(1)
+                    logger.debug("Recovered total hours from notes: %s", m.group(1))
+                    break
+        # L1/client hours: "N client hours" or "N L1 hours" or "N hours for workstations"
+        if not src_data.l1_sati:
+            for pattern in [
+                r'(\d+)\s+(?:client|L1|workstation|klijentsk\w*)\s+hours?',
+                r'(\d+)\s+hours?\s+for\s+(?:workstation|radnih|client|desktop)',
+            ]:
+                m = re.search(pattern, notes_text, re.IGNORECASE)
+                if m:
+                    src_data.l1_sati = m.group(1)
+                    logger.debug("Recovered L1 hours from notes: %s", m.group(1))
+                    break
+        # L2/server hours: "N server hours" or "N L2 hours" or "N hour for server"
+        if not src_data.l2_sati:
+            for pattern in [
+                r'(\d+)\s+(?:server|L2|L3|poslužiteljsk\w*|engineer)\s+hours?',
+                r'(\d+)\s+hours?\s+for\s+(?:server|poslužitelj)',
+            ]:
+                m = re.search(pattern, notes_text, re.IGNORECASE)
+                if m:
+                    src_data.l2_sati = m.group(1)
+                    logger.debug("Recovered L2 hours from notes: %s", m.group(1))
+                    break
+        # Infer from total if still missing
+        if src_data.ukupno_sati and not src_data.l1_sati and not src_data.l2_sati:
+            src_data.l1_sati = src_data.ukupno_sati
+            src_data.l2_sati = "0"
+        elif src_data.ukupno_sati and src_data.l1_sati and not src_data.l2_sati:
+            src_data.l2_sati = "0"
+
     # Build stavke (pricing table rows)
     stavke = []
     for item, new_price in matched:
@@ -604,6 +687,28 @@ def build_context(
         "vat_note": config.generation.vat_note,
         "mjesto": config.general.default_location,
     }
+
+    # Warn about any remaining placeholder values
+    _PLACEHOLDER_FIELDS = {
+        "korisnik_oib": "OIB klijenta / Client OIB",
+        "korisnik_adresa": "Adresa klijenta / Client address",
+        "korisnik_direktor": "Direktor klijenta / Client director",
+        "broj_ugovora": "Broj ugovora / Contract number",
+        "datum_ugovora": "Datum ugovora / Contract date",
+        "ukupno_sati": "Ukupno sati / Total hours",
+        "l1_sati": "L1 sati / L1 hours",
+        "l2_sati": "L2 sati / L2 hours",
+    }
+    missing = []
+    for field, label in _PLACEHOLDER_FIELDS.items():
+        val = context.get(field, "")
+        if not val or "___" in str(val):
+            missing.append(label)
+    if missing:
+        logger.warning(
+            "Placeholder values in annex for %s: %s",
+            extraction.folder_name, ", ".join(missing),
+        )
 
     return context
 

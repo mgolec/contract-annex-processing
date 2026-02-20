@@ -1684,32 +1684,44 @@ class PipelineGUI:
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
 
+            # Extraction data is nested under the 'extraction' key
+            ex = data.get("extraction") or {}
+
             lines: list[str] = []
-            lines.append(f"Klijent / Client: {data.get('client_name', client_name)}")
-            lines.append(f"Broj ugovora / Contract #: {data.get('contract_number', 'N/A')}")
-            lines.append(f"Datum / Date: {data.get('document_date', 'N/A')}")
+            lines.append(f"Klijent / Client: {ex.get('client_name') or client_name}")
+            lines.append(f"OIB: {ex.get('client_oib') or 'N/A'}")
             lines.append(
-                f"Pouzdanost / Confidence: {data.get('confidence', data.get('confidence_level', 'N/A'))}"
+                f"Broj ugovora / Contract #: "
+                f"{ex.get('contract_number') or ex.get('parent_contract_number') or 'N/A'}"
             )
+            lines.append(f"Datum / Date: {ex.get('document_date') or 'N/A'}")
+            lines.append(
+                f"Pouzdanost / Confidence: {ex.get('confidence') or 'N/A'}"
+            )
+            lines.append(f"Valuta / Currency: {ex.get('currency') or 'N/A'}")
+            lines.append(f"Izvorni dokument / Source: {data.get('source_file') or 'N/A'}")
 
             # Show pricing items
-            items = data.get("pricing_items", data.get("stavke", []))
+            items = ex.get("pricing_items", [])
             lines.append(f"\nStavke ({len(items)}) / Pricing items ({len(items)}):")
             lines.append("-" * 50)
             for item in items:
-                name = item.get("name", item.get("naziv", "?"))
-                price = item.get("price", item.get("cijena", "?"))
-                currency = item.get("currency", item.get("valuta", ""))
-                unit = item.get("unit", item.get("jedinica", ""))
+                name = item.get("service_name", "?")
+                price = item.get("price_value", item.get("price_raw", "?"))
+                currency = item.get("currency", ex.get("currency", ""))
+                unit = item.get("unit") or item.get("designation") or ""
                 lines.append(f"  {name}: {price} {currency} {f'/ {unit}' if unit else ''}")
 
-            # Show notes/flags
-            notes = data.get("notes", data.get("napomene", ""))
-            flags = data.get("flags", data.get("oznake", []))
+            # Show notes
+            notes = ex.get("notes", [])
             if notes:
-                lines.append(f"\nNapomene / Notes: {notes}")
-            if flags:
-                lines.append(f"Oznake / Flags: {', '.join(flags) if isinstance(flags, list) else flags}")
+                notes_str = "; ".join(notes) if isinstance(notes, list) else str(notes)
+                lines.append(f"\nNapomene / Notes: {notes_str}")
+
+            # Show error if extraction failed
+            error = data.get("error")
+            if error:
+                lines.append(f"\n[GREŠKA / ERROR]: {error}")
 
             self._set_review_preview("\n".join(lines))
         except Exception as exc:
