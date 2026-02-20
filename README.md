@@ -57,31 +57,43 @@ python3 launch.py      # macOS / Linux
 
 ## Korištenje / Usage
 
-GUI vas vodi kroz 5 koraka:
+GUI vas vodi kroz 5 koraka / The GUI guides you through 5 steps:
 
 ### 0. Postavke / Settings
-- Postavite putanju do mape s ugovorima
-- Provjerite podatke o tvrtki
-- Unesite API ključ (ako nije već postavljen)
+- Postavite putanju do mape s ugovorima / Set the path to the contracts folder
+- Provjerite podatke o tvrtki / Verify company details
+- Unesite API ključ (ako nije već postavljen) / Enter API key (if not already set)
+- Testirajte API vezu gumbom "Test API" / Test the API connection with the "Test API" button
 
 ### 1. Priprema / Setup
-- Kopira ugovore u radnu mapu
-- Skenira i klasificira sve datoteke
-- Prikazuje inventar klijenata
+- Kopira ugovore u radnu mapu / Copies contracts to the working directory
+- Skenira i klasificira sve datoteke / Scans and classifies all files
+- Prikazuje inventar klijenata / Displays client inventory
 
 ### 2. Ekstrakcija / Extraction
-- Čita ugovore i ekstrahira cijene pomoću AI
-- Generira kontrolnu tablicu (Excel)
+- Čita ugovore i ekstrahira cijene pomoću AI / Reads contracts and extracts prices via AI
+- Generira kontrolnu tablicu (Excel) / Generates the control spreadsheet (Excel)
+- Filtrirajte klijente po imenu / Filter clients by name
 
 ### 3. Pregled / Review
-- Otvorite kontrolnu tablicu u Excelu
-- Na Sheet 1: označite klijente kao "Odobreno"
-- Na Sheet 2: unesite nove cijene
-- Spremite i zatvorite
+- Otvorite kontrolnu tablicu u Excelu / Open the control spreadsheet in Excel
+- Na Sheet 1: označite klijente kao "Odobreno" / On Sheet 1: mark clients as "Odobreno"
+- Na Sheet 2: unesite nove cijene / On Sheet 2: enter new prices
+- Spremite i zatvorite / Save and close
+- Pregledajte ekstrakcije po klijentu u GUI-u / Preview per-client extractions in the GUI
 
 ### 4. Generiranje / Generation
-- Pregledajte što će se generirati (Preview)
-- Generirajte aneks dokumente
+- Pregledajte što će se generirati (Preview) / Preview what will be generated
+- Generirajte aneks dokumente / Generate annex documents
+
+### Tipkovni prečaci / Keyboard Shortcuts
+
+| Prečac / Shortcut | Akcija / Action |
+|---|---|
+| Cmd/Ctrl + 1-4 | Navigacija na korak / Navigate to step |
+| Enter | Pokreni trenutni korak / Run current step |
+| Esc | Otkaži operaciju / Cancel operation |
+| Cmd/Ctrl + F | Pretraži log / Search log |
 
 ---
 
@@ -103,19 +115,33 @@ pipeline.toml       Konfiguracija
 ## CLI (napredno) / CLI (advanced)
 
 Pipeline se može koristiti i putem naredbenog retka:
+The pipeline can also be used via the command line:
 
 ```bash
 # Aktivirajte virtualno okruženje / Activate virtual environment
 source .venv/bin/activate          # macOS / Linux
 .venv\Scripts\activate             # Windows
 
+# Verzija / Version
+pipeline --version
+
 # Pokrenite naredbe / Run commands
 pipeline setup --source ./contracts
-pipeline extract
-pipeline generate --start-number 30
+pipeline extract [--force] [--verbose]
+pipeline generate --start-number 30 [--verbose]
 pipeline status
 pipeline inventory
+pipeline validate-template
+
+# Resetiranje faza / Reset phases
+pipeline reset setup               # Resetira jednu fazu / Reset a single phase
+pipeline reset --all                # Resetira sve faze / Reset all phases
 ```
+
+Zastavice / Flags:
+- `--version` / `-V` — Prikaži verziju / Show version
+- `--verbose` — Puni ispis grešaka / Full error tracebacks
+- `--force` — Ponovi ekstrakciju već obrađenih / Re-extract already processed docs
 
 ---
 
@@ -139,9 +165,31 @@ Check that `pipeline.toml` exists and has valid TOML syntax.
 Pokrenite korak Priprema (Setup) prije Ekstrakcije.
 Run the Setup step before Extraction.
 
+**Korak nije dostupan / Step is not available**
+Koraci se moraju izvršiti redom: Priprema → Ekstrakcija → Pregled → Generiranje.
+Nedostupni koraci su označeni sivom bojom u GUI-u.
+Steps must be run in order: Setup → Extraction → Review → Generation.
+Unavailable steps are greyed out in the GUI.
+
+**Pipeline se zaglavio u "running" stanju / Pipeline stuck in "running" state**
+Ako je pipeline prekinut tijekom izvršavanja, koristite `pipeline reset [faza]` za resetiranje.
+U GUI-u će se prikazati upozorenje o zastoju.
+If the pipeline was interrupted, use `pipeline reset [phase]` to reset the state.
+The GUI will show a warning about stale running phases.
+
 **Problemi s .doc datotekama / Problems with .doc files**
 Instalirajte LibreOffice: [libreoffice.org](https://www.libreoffice.org/)
 
 **API greške / API errors**
 Provjerite API ključ u postavkama ili u `.env` datoteci.
+Koristite gumb "Test API" u postavkama za provjeru veze.
 Check the API key in Settings or in the `.env` file.
+Use the "Test API" button in Settings to verify the connection.
+API pozivi automatski se ponavljaju do 3 puta kod privremenih grešaka.
+API calls automatically retry up to 3 times on transient errors.
+
+**Greška u kontrolnoj tablici / Spreadsheet errors**
+Ako ste promijenili strukturu tablice (zaglavlja, redoslijed stupaca), pipeline neće moći pročitati podatke.
+Generirajte novu tablicu ponovnim pokretanjem ekstrakcije.
+If you changed the spreadsheet structure (headers, column order), the pipeline cannot read the data.
+Generate a new spreadsheet by re-running extraction.
