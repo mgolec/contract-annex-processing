@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ from doc_pipeline.config import PipelineConfig
 from doc_pipeline.models import ClientExtraction, Currency, PricingItem
 from doc_pipeline.utils.croatian import hr_date, hr_number, nfc
 from doc_pipeline.utils.progress import console
+
+logger = logging.getLogger(__name__)
 
 # HRK → EUR conversion rate — no longer hardcoded; sourced from config.currency.hrk_to_eur_rate
 
@@ -498,6 +501,7 @@ def build_context(
     is_hrk = ex.currency == Currency.HRK
     hrk_rate = Decimal(str(config.currency.hrk_to_eur_rate))
     matched = _match_prices(ex.pricing_items, approved.new_prices)
+    logger.debug("Matched prices for %s: %d items", extraction.folder_name, len(matched))
 
     # ── Parse source documents for director, address, hours ─────────
     src_data = _parse_best_source_data(extraction, config)
@@ -728,6 +732,8 @@ def run_generation(
     skipped: list[str] = []
     year_prefix = f"U-{datetime.now().strftime('%y')}-"
 
+    # Note: all timestamps are local time (CET/CEST for Croatia). No timezone conversion needed.
+
     # M27: Auto-detect next annex number if not explicitly provided
     if start_number is None:
         seq = _detect_next_annex_number(config.annexes_output_path)
@@ -843,6 +849,7 @@ def run_generation(
         out_dir.mkdir(parents=True, exist_ok=True)
         tpl.save(str(out_file))
         generated.append(out_file)
+        logger.debug("Generated annex: %s", out_file)
 
         console.print(f"  [green]Generated:[/green] {out_file.relative_to(config.output_path)}")
 

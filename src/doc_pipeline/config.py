@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 try:
     import tomllib
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -37,6 +40,14 @@ class ExtractionConfig(BaseModel):
     use_batch_api: bool = True
     confidence_threshold: str = "medium"
 
+    @field_validator('confidence_threshold', mode='before')
+    @classmethod
+    def validate_confidence(cls, v):
+        valid = {"low", "medium", "high"}
+        if v not in valid:
+            raise ValueError(f"confidence_threshold must be one of {valid}, got '{v}'")
+        return v
+
 
 class CurrencyConfig(BaseModel):
     hrk_to_eur_rate: float = 7.53450
@@ -46,6 +57,16 @@ class CurrencyConfig(BaseModel):
 class GenerationConfig(BaseModel):
     default_effective_date: str = "2026-03-01"
     vat_note: str = "Sve cijene su izražene bez PDV-a."
+
+    @field_validator('default_effective_date', mode='before')
+    @classmethod
+    def validate_date(cls, v):
+        if isinstance(v, str):
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise ValueError(f"default_effective_date must be YYYY-MM-DD format, got '{v}'")
+        return v
 
 
 class PipelineConfig(BaseModel):
@@ -131,6 +152,9 @@ def load_config() -> PipelineConfig:
     if toml_path.exists():
         with open(toml_path, "rb") as f:
             data = tomllib.load(f)
+        logger.debug("Loaded config from %s", toml_path)
+    else:
+        logger.warning("Config file not found: %s, using defaults", toml_path)
 
     # Load .env for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")

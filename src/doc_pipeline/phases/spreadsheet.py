@@ -211,6 +211,8 @@ def _build_sheet1(
     ws.auto_filter.ref = f"A1:K{last_row}"
 
     # Sheet protection — allow sort/filter
+    # Sheet protection prevents accidental edits only (not encryption).
+    # Password "procudo" is intentionally simple — security is not the goal here.
     ws.protection.sheet = True
     ws.protection.password = "procudo"
     ws.protection.sort = False
@@ -260,13 +262,16 @@ def _build_sheet2(
             _style_cell(ws, row_idx, 2, item.service_name)
             # C: Current price (numeric)
             _style_cell(ws, row_idx, 3, item.price_value)
-            # Format price cells
+            # Note: '#,##0.00' format is locale-dependent in Excel/LibreOffice.
+            # On Croatian locale systems, this renders as '1.000,00' (correct).
+            # On English locale systems, it renders as '1,000.00'.
+            # This spreadsheet is designed primarily for Microsoft Excel on Croatian locale.
             ws.cell(row=row_idx, column=3).number_format = '#,##0.00'
             # D: Currency
             _style_cell(ws, row_idx, 4, item.currency.value)
-            # E: EUR equivalent (formula)
+            # E: EUR equivalent (formula, wrapped in IFERROR for robustness)
             eur_formula = (
-                f'=IF(D{row_idx}="HRK",C{row_idx}/{hrk_rate},C{row_idx})'
+                f'=IFERROR(IF(D{row_idx}="HRK",C{row_idx}/{hrk_rate},C{row_idx}),"")'
             )
             _style_cell(ws, row_idx, 5, eur_formula)
             ws.cell(row=row_idx, column=5).number_format = '#,##0.00'
@@ -277,10 +282,10 @@ def _build_sheet2(
             # G: New price EUR (editable)
             _style_cell(ws, row_idx, 7, None, locked=False)
             ws.cell(row=row_idx, column=7).number_format = '#,##0.00'
-            # H: % change (formula, editable column for overrides)
+            # H: % change (formula, editable column for overrides, wrapped in IFERROR)
             pct_formula = (
-                f'=IF(AND(G{row_idx}<>"",E{row_idx}>0),'
-                f'(G{row_idx}-E{row_idx})/E{row_idx},"")'
+                f'=IFERROR(IF(AND(G{row_idx}<>"",E{row_idx}>0),'
+                f'(G{row_idx}-E{row_idx})/E{row_idx},""),"")'
             )
             _style_cell(ws, row_idx, 8, pct_formula, locked=False)
             ws.cell(row=row_idx, column=8).number_format = '0.00%'
@@ -296,7 +301,8 @@ def _build_sheet2(
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:I{last_row}"
 
-    # Sheet protection
+    # Sheet protection prevents accidental edits only (not encryption).
+    # Password "procudo" is intentionally simple — security is not the goal here.
     ws.protection.sheet = True
     ws.protection.password = "procudo"
     ws.protection.sort = False
@@ -346,7 +352,9 @@ def _build_sheet3(
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:G{last_row}"
 
-    # Full sheet protection (all locked)
+    # Full sheet protection (all locked).
+    # Sheet protection prevents accidental edits only (not encryption).
+    # Password "procudo" is intentionally simple — security is not the goal here.
     ws.protection.sheet = True
     ws.protection.password = "procudo"
     ws.protection.sort = False

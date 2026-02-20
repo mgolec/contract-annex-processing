@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +40,7 @@ from doc_pipeline.utils.parsers import (
 )
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 # ── Extraction prompt ────────────────────────────────────────────────────────
@@ -249,6 +252,8 @@ def _extract_sync(
         )
         document_text = document_text[:100_000]
 
+    logger.debug("API call for %s: %d chars", folder_name, len(document_text))
+
     # C3: Retry with exponential backoff for transient API errors
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -285,6 +290,7 @@ def _extract_sync(
         if block.type == "tool_use" and block.name == "extract_contract_data":
             result = _parse_extraction_response(block.input)
             result.raw_text_length = len(document_text)
+            logger.debug("Extraction result for %s: confidence=%s", folder_name, result.confidence.value)
             return result
 
     raise ValueError("No tool_use block found in Claude response")
@@ -715,7 +721,6 @@ def _run_sync_extraction(
 
 def _sanitize_custom_id(folder_name: str) -> str:
     """Sanitize folder name into a valid batch custom_id (alphanumeric, _, -)."""
-    import re
     # Replace non-alphanumeric chars (except _ and -) with _
     sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", folder_name)
     # Truncate to 64 chars

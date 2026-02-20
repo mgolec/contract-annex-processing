@@ -128,6 +128,7 @@ class ClientEntry(BaseModel):
 class Inventory(BaseModel):
     """Full file inventory produced by Phase 0."""
 
+    # Note: created_at uses local time (CET/CEST for Croatia). No timezone conversion needed.
     created_at: datetime = Field(default_factory=datetime.now)
     source_path: str = ""
     working_path: str = ""

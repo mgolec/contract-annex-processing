@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import fcntl
+import logging
 import os
 import re
 import shutil
+import shutil as _shutil
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,8 @@ from doc_pipeline.models import (
     FileStatus,
 )
 from doc_pipeline.utils.croatian import nfc
+
+logger = logging.getLogger(__name__)
 
 # Files to skip during copy (all lowercase for case-insensitive matching)
 SKIP_FILES = {".ds_store", "thumbs.db", "desktop.ini", ".gitkeep"}
@@ -74,14 +78,17 @@ def classify_file(filename: str, extension: str) -> DocType:
 
     for pattern, doc_type in _COMPILED_RULES:
         if pattern.search(name_lower):
+            logger.debug("Classified %s as %s", filename, doc_type.value)
             return doc_type
 
     # PDFs that don't match any pattern are likely scans/misc
     if extension.lower() == ".pdf":
+        logger.debug("Classified %s as %s (unmatched PDF)", filename, DocType.IRRELEVANT.value)
         return DocType.IRRELEVANT
 
     # .doc/.docx without a matching pattern — still might be a contract
     # Default to OTHER_CONTRACT for these rather than IRRELEVANT
+    logger.debug("Classified %s as %s (default)", filename, DocType.OTHER_CONTRACT.value)
     return DocType.OTHER_CONTRACT
 
 
@@ -123,6 +130,8 @@ def scan_folder(
     entries: list[FileEntry] = []
 
     for file_path in sorted(folder.rglob("*")):
+        if file_path.is_symlink():
+            continue
         if not file_path.is_file():
             continue
         if file_path.name.lower() in SKIP_FILES:
@@ -198,6 +207,7 @@ def dedup_files(files: list[FileEntry]) -> list[FileEntry]:
         for dup in group[1:]:
             dup.status = FileStatus.DUPLICATE_SKIPPED
             dup.duplicate_of = best.relative_path
+            logger.debug("Dedup: keeping %s, skipping %s", best.filename, dup.filename)
 
     return files
 
@@ -258,7 +268,11 @@ def _annex_sort_key(f: FileEntry) -> tuple[int, int, float]:
     if f.contract_number:
         m = CONTRACT_NUMBER_RE.search(f.contract_number)
         if m:
-            year = int(m.group(1))
+            year = int(m.group(1))  # 2-digit year
+            if year < 50:
+                year += 2000  # 00-49 → 2000-2049
+            else:
+                year += 1900  # 50-99 → 1950-1999
             seq = int(m.group(2))
     mtime = f.modified_date.timestamp() if f.modified_date else 0
     return (year, seq, mtime)
@@ -314,6 +328,19 @@ def build_document_chain(files: list[FileEntry]) -> DocumentChain:
 # ── Copy source tree ──────────────────────────────────────────────────────────
 
 
+def _check_disk_space(source: Path, dest: Path) -> tuple[int, int]:
+    """Return (required_bytes, available_bytes). Raises RuntimeError if insufficient."""
+    required = sum(f.stat().st_size for f in source.rglob('*') if f.is_file() and not f.is_symlink())
+    usage = _shutil.disk_usage(str(dest.parent))
+    available = usage.free
+    if required * 1.1 > available:  # 10% margin
+        raise RuntimeError(
+            f"Nedovoljno prostora na disku / Insufficient disk space: "
+            f"need {required / 1_000_000:.0f} MB, have {available / 1_000_000:.0f} MB"
+        )
+    return required, available
+
+
 def copy_source_tree(
     source: Path,
     dest: Path,
@@ -331,6 +358,15 @@ def copy_source_tree(
             f"Destination already exists: {dest}\n"
             "Use --force to overwrite."
         )
+
+    # L-disk-space: Check available disk space before starting copy
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    required, available = _check_disk_space(source, dest)
+    logger.debug(
+        "Disk space check: need %d MB, have %d MB",
+        required // 1_000_000,
+        available // 1_000_000,
+    )
 
     # Atomic copy with rollback when force-overwriting
     backup = dest.with_name(dest.name + "_backup")
@@ -364,10 +400,13 @@ def copy_source_tree(
                     shutil.copytree(
                         item,
                         dest_dir,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
                         ignore=_ignore_junk,
                     )
                     # Count files in copied tree
                     copied += sum(1 for f in dest_dir.rglob("*") if f.is_file())
+                    logger.debug("Copied %s -> %s", item, dest_dir)
                     progress.update(task, description=f"Copied: {item.name}")
 
                 elif item.is_file() and item.suffix.lower() in VALID_EXTENSIONS:
@@ -389,7 +428,12 @@ def copy_source_tree(
                     virtual_dir.mkdir(exist_ok=True)
                     shutil.copy2(item, virtual_dir / item.name)
                     copied += 1
+                    logger.debug("Copied loose file %s -> %s", item, virtual_dir / item.name)
                     progress.update(task, description=f"Copied loose file: {item.name}")
+
+                else:
+                    # Root-level file with invalid extension — count as skipped
+                    skipped += 1
 
         # Success — remove backup if it exists
         if backup.exists():
@@ -467,10 +511,10 @@ def discover_clients(source_dir: Path) -> list[ClientEntry]:
             if has_subdirs:
                 flags.append("files_in_subdirectories")
 
-            # Check for loose root file → virtual folder
-            # (the folder name matches a file stem)
-            if (source_dir / (client_dir.name + ".doc")).exists() or \
-               (source_dir / (client_dir.name + ".docx")).exists():
+            # Check for virtual folder (created from a loose root file):
+            # a folder containing a single file whose stem matches the folder name
+            if len(files) == 1 and files[0].filename and \
+               Path(files[0].filename).stem == client_dir.name:
                 flags.append("virtual_folder_from_root_file")
 
             # Build document chain

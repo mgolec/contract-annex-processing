@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -127,6 +129,49 @@ _STEP_DEPS: dict[int, list[int]] = {
 # Maximum lines to keep in log area
 MAX_LOG_LINES = 3000
 
+# Platform detection for keyboard shortcuts
+_IS_MAC = platform.system() == "Darwin"
+_MOD = "Command" if _IS_MAC else "Control"
+_MOD_DISPLAY = "\u2318" if _IS_MAC else "Ctrl+"
+
+
+# ── Tooltip helper (L9) ──────────────────────────────────────────────────────
+
+class ToolTip:
+    """Simple hover tooltip for any widget."""
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.tip_window: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._show)
+        widget.bind("<Leave>", self._hide)
+
+    def _show(self, event: tk.Event | None = None) -> None:
+        try:
+            bbox = self.widget.bbox("insert")
+        except Exception:
+            bbox = None
+        x = (bbox[0] if bbox else 0) + self.widget.winfo_rootx() + 25
+        y = (bbox[1] if bbox else 0) + self.widget.winfo_rooty() + 25
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tw,
+            text=self.text,
+            background="#ffffe0",
+            relief="solid",
+            borderwidth=1,
+            font=("Arial", 9),
+        )
+        label.pack()
+
+    def _hide(self, event: tk.Event | None = None) -> None:
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
 
 # ── Main Application ─────────────────────────────────────────────────────────
 
@@ -138,6 +183,15 @@ class PipelineGUI:
         self.root.title("Procudo — Pipeline za ugovore / Contract Pipeline")
         self.root.geometry("960x680")
         self.root.minsize(800, 560)
+
+        # L3: Window icon
+        try:
+            icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
+            if icon_path.exists():
+                img = tk.PhotoImage(file=str(icon_path))
+                self.root.iconphoto(True, img)
+        except Exception:
+            pass  # No icon available, use default
 
         # WM_DELETE_WINDOW handler (C6)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -166,7 +220,19 @@ class PipelineGUI:
         # Mouse wheel binding id (for cleanup)
         self._mousewheel_binding_id: str | None = None
 
+        # F4: Log search state — maps log widget id to search state dict
+        self._log_search_state: dict[str, dict[str, Any]] = {}
+
+        # Store settings-related widget refs for tooltips / API test (L9, F3)
+        self._settings_entries: dict[str, tk.StringVar] = {}
+        self._api_key_var: tk.StringVar | None = None
+
+        # F1: Client filter variables for extraction and generation steps
+        self._extract_clients_var: tk.StringVar | None = None
+        self._gen_clients_var: tk.StringVar | None = None
+
         self._build_ui()
+        self._bind_keyboard_shortcuts()
         self._show_step(0)
 
     # ── WM_DELETE_WINDOW handler (C6) ─────────────────────────────────────
@@ -184,6 +250,91 @@ class PipelineGUI:
             # else: do nothing, user chose not to close
         else:
             self.root.destroy()
+
+    # ── Keyboard shortcuts (L1) ──────────────────────────────────────────
+
+    def _bind_keyboard_shortcuts(self) -> None:
+        """Bind global keyboard shortcuts."""
+        mod = _MOD
+        # Ctrl/Cmd+S: Save settings (when on settings step)
+        self.root.bind_all(f"<{mod}-s>", self._on_shortcut_save)
+        self.root.bind_all(f"<{mod}-S>", self._on_shortcut_save)
+        # Enter/Return: Trigger primary action
+        self.root.bind_all("<Return>", self._on_shortcut_enter)
+        # Escape: Cancel running operation
+        self.root.bind_all("<Escape>", self._on_shortcut_escape)
+        # Ctrl/Cmd+1-4: Navigate to steps 1-4 (internal index 1-4)
+        for i in range(1, 5):
+            self.root.bind_all(
+                f"<{mod}-Key-{i}>",
+                lambda e, step=i: self._on_shortcut_step(step),
+            )
+        # Also bind Ctrl/Cmd+0 to Settings (step 0) for completeness
+        self.root.bind_all(
+            f"<{mod}-Key-0>",
+            lambda e: self._on_shortcut_step(0),
+        )
+        # Ctrl/Cmd+F: Focus log search (F4)
+        self.root.bind_all(f"<{mod}-f>", self._on_shortcut_search)
+        self.root.bind_all(f"<{mod}-F>", self._on_shortcut_search)
+
+    def _on_shortcut_save(self, event: tk.Event) -> str:
+        """Ctrl/Cmd+S: Save settings if on settings step."""
+        # Don't trigger if focus is in a text widget (avoid interfering with text editing)
+        if self._current_step == 0 and hasattr(self, "_settings_entries") and self._settings_entries:
+            self._save_settings(self._settings_entries)
+        return "break"
+
+    def _on_shortcut_enter(self, event: tk.Event) -> str | None:
+        """Enter: Trigger primary action on current step."""
+        # Don't capture Enter from Entry widgets where user might be typing
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Text, ttk.Entry, tk.Entry)):
+            return None  # Let default behavior handle it
+        if self._running:
+            return "break"
+        actions = {
+            0: lambda: (
+                self._save_settings(self._settings_entries)
+                if self._settings_entries
+                else None
+            ),
+            1: self._run_setup,
+            2: self._run_extraction,
+            3: lambda: self._show_step(4),
+            4: self._run_generation,
+        }
+        action = actions.get(self._current_step)
+        if action:
+            action()
+        return "break"
+
+    def _on_shortcut_escape(self, event: tk.Event) -> str:
+        """Escape: Cancel running operation."""
+        if self._running and self._cancel_btn is not None:
+            self._on_cancel_click()
+        return "break"
+
+    def _on_shortcut_step(self, step: int) -> str:
+        """Ctrl/Cmd+N: Navigate directly to internal step N.
+
+        Ctrl+1 -> step 1 (Setup), Ctrl+4 -> step 4 (Generation).
+        Ctrl+0 -> step 0 (Settings).
+        """
+        if 0 <= step < len(STEPS):
+            self._on_step_click(step)
+        return "break"
+
+    def _on_shortcut_search(self, event: tk.Event) -> str:
+        """Ctrl/Cmd+F: Focus the log search field on the current step."""
+        # Find the search entry for the current step's log widget
+        for wid, state in self._log_search_state.items():
+            entry = state.get("entry")
+            if entry and entry.winfo_exists():
+                entry.focus_set()
+                entry.select_range(0, tk.END)
+                return "break"
+        return "break"
 
     # ── UI construction ──────────────────────────────────────────────────
 
@@ -266,6 +417,26 @@ class PipelineGUI:
             step_idx = i
             lbl.bind("<Button-1>", lambda e, s=step_idx: self._on_step_click(s))
             self._step_labels.append(lbl)
+
+        # L1: Keyboard shortcut help text at bottom of sidebar
+        shortcut_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
+        shortcut_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 8))
+        shortcut_text = (
+            f"{_MOD_DISPLAY}1-4: Navigacija / Navigate\n"
+            f"Enter: Pokreni / Run\n"
+            f"Esc: Odustani / Cancel\n"
+            f"{_MOD_DISPLAY}S: Spremi / Save\n"
+            f"{_MOD_DISPLAY}F: Tra\u017ei / Search"
+        )
+        ttk.Label(
+            shortcut_frame,
+            text=shortcut_text,
+            background="#2c3e50",
+            foreground="#7f8c8d",
+            font=("Arial", 8),
+            padding=(12, 4),
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W)
 
         # ── Content area ──
         self._content_outer = ttk.Frame(main_pane)
@@ -382,10 +553,44 @@ class PipelineGUI:
                 anchor=tk.W, pady=(0, 12)
             )
 
-    def _add_log_area(self, parent: ttk.Frame) -> tk.Text:
-        """Add a scrollable log text area."""
+    def _add_log_area(self, parent: ttk.Frame, step_name: str = "log") -> tk.Text:
+        """Add a scrollable log text area with search bar and save button."""
+        # F4: Search bar above the log
+        search_frame = ttk.Frame(parent)
+        search_frame.pack(fill=tk.X, pady=(8, 2))
+
+        ttk.Label(search_frame, text="Tra\u017ei / Search:", font=("Arial", 9)).pack(
+            side=tk.LEFT
+        )
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=(4, 0))
+
+        search_btn = ttk.Button(
+            search_frame,
+            text="Tra\u017ei / Find",
+            width=10,
+        )
+        search_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+        next_btn = ttk.Button(
+            search_frame,
+            text="Sljede\u0107i / Next",
+            width=12,
+        )
+        next_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+        # L6: Save log button
+        save_btn = ttk.Button(
+            search_frame,
+            text="Spremi log / Save Log",
+            width=16,
+        )
+        save_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        # Log text area
         frame = ttk.Frame(parent)
-        frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
 
         scrollbar = ttk.Scrollbar(frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -403,6 +608,32 @@ class PipelineGUI:
         )
         log.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=log.yview)
+
+        # Configure search highlight tag
+        log.tag_configure("search_highlight", background="#b58900", foreground="#1e1e1e")
+
+        # F4: Store search state
+        wid = str(id(log))
+        self._log_search_state[wid] = {
+            "entry": search_entry,
+            "var": search_var,
+            "match_index": 0,
+            "matches": [],
+            "log": log,
+        }
+
+        # Wire up search actions
+        search_btn.configure(command=lambda: self._log_search(log))
+        next_btn.configure(command=lambda: self._log_search_next(log))
+        search_entry.bind("<Return>", lambda e: self._log_search(log))
+        # Clear highlights when search text is emptied
+        search_var.trace_add(
+            "write", lambda *_: self._log_search_clear(log) if not search_var.get() else None
+        )
+
+        # L6: Wire up save button
+        save_btn.configure(command=lambda: self._save_log(log, step_name))
+
         return log
 
     def _add_progress(self, parent: ttk.Frame) -> ttk.Progressbar:
@@ -458,6 +689,92 @@ class PipelineGUI:
             log_widget.delete("1.0", f"{line_count - MAX_LOG_LINES}.0")
         log_widget.see(tk.END)
         log_widget.configure(state=tk.DISABLED)
+
+    # ── F4: Log search methods ────────────────────────────────────────────
+
+    def _log_search(self, log_widget: tk.Text) -> None:
+        """Highlight all matches of the search term in the log."""
+        wid = str(id(log_widget))
+        state = self._log_search_state.get(wid)
+        if not state:
+            return
+        term = state["var"].get().strip()
+        if not term:
+            self._log_search_clear(log_widget)
+            return
+
+        # Clear previous highlights
+        log_widget.tag_remove("search_highlight", "1.0", tk.END)
+        state["matches"] = []
+        state["match_index"] = 0
+
+        # Find all occurrences
+        start_pos = "1.0"
+        while True:
+            pos = log_widget.search(term, start_pos, stopindex=tk.END, nocase=True)
+            if not pos:
+                break
+            end_pos = f"{pos}+{len(term)}c"
+            log_widget.tag_add("search_highlight", pos, end_pos)
+            state["matches"].append(pos)
+            start_pos = end_pos
+
+        # Jump to first match
+        if state["matches"]:
+            log_widget.see(state["matches"][0])
+            self._set_status(
+                f"Prona\u0111eno {len(state['matches'])} rezultata / "
+                f"Found {len(state['matches'])} matches"
+            )
+        else:
+            self._set_status("Nema rezultata / No matches found")
+
+    def _log_search_next(self, log_widget: tk.Text) -> None:
+        """Jump to the next search match."""
+        wid = str(id(log_widget))
+        state = self._log_search_state.get(wid)
+        if not state or not state["matches"]:
+            return
+        state["match_index"] = (state["match_index"] + 1) % len(state["matches"])
+        pos = state["matches"][state["match_index"]]
+        log_widget.see(pos)
+        self._set_status(
+            f"Rezultat {state['match_index'] + 1}/{len(state['matches'])} / "
+            f"Match {state['match_index'] + 1}/{len(state['matches'])}"
+        )
+
+    def _log_search_clear(self, log_widget: tk.Text) -> None:
+        """Clear search highlights."""
+        log_widget.tag_remove("search_highlight", "1.0", tk.END)
+        wid = str(id(log_widget))
+        state = self._log_search_state.get(wid)
+        if state:
+            state["matches"] = []
+            state["match_index"] = 0
+
+    # ── L6: Log save method ───────────────────────────────────────────────
+
+    def _save_log(self, log_widget: tk.Text, step_name: str) -> None:
+        """Save log contents to a text file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"pipeline_log_{step_name}_{timestamp}.txt"
+        filepath = filedialog.asksaveasfilename(
+            title="Spremi log / Save Log",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=default_name,
+        )
+        if not filepath:
+            return
+        try:
+            content = log_widget.get("1.0", tk.END)
+            Path(filepath).write_text(content, encoding="utf-8")
+            self._set_status(f"Log spremljen / Log saved: {Path(filepath).name}")
+        except Exception as exc:
+            messagebox.showerror(
+                "Gre\u0161ka / Error",
+                f"Spremanje loga nije uspjelo / Log save failed:\n{exc}",
+            )
 
     def _add_next_step_button(self, parent: ttk.Frame, next_step: int) -> None:
         """Add a prominent 'Continue to Next Step' button after phase completion (M34)."""
@@ -561,8 +878,12 @@ class PipelineGUI:
 
         row = 0
         entries: dict[str, tk.StringVar] = {}
+        # L9: collect entry widgets for tooltips
+        entry_widgets: dict[str, ttk.Entry] = {}
 
-        def add_field(label: str, key: str, default: str = "", masked: bool = False) -> None:
+        def add_field(
+            label: str, key: str, default: str = "", masked: bool = False
+        ) -> ttk.Entry:
             nonlocal row
             ttk.Label(form_frame, text=label, font=("Arial", 10)).grid(
                 row=row, column=0, sticky=tk.W, padx=(0, 12), pady=4
@@ -573,9 +894,13 @@ class PipelineGUI:
             if masked:
                 entry.configure(show="*")
             entry.grid(row=row, column=1, sticky=tk.EW, pady=4)
+            entry_widgets[key] = entry
             row += 1
+            return entry
 
-        def add_folder_field(label: str, key: str, default: str = "") -> None:
+        def add_folder_field(
+            label: str, key: str, default: str = ""
+        ) -> ttk.Entry:
             nonlocal row
             ttk.Label(form_frame, text=label, font=("Arial", 10)).grid(
                 row=row, column=0, sticky=tk.W, padx=(0, 12), pady=4
@@ -593,7 +918,9 @@ class PipelineGUI:
                 command=lambda v=var: self._pick_folder(v),
             )
             btn.pack(side=tk.RIGHT, padx=(4, 0))
+            entry_widgets[key] = entry
             row += 1
+            return entry
 
         form_frame.columnconfigure(1, weight=1)
 
@@ -645,6 +972,21 @@ class PipelineGUI:
             masked=True,
         )
 
+        # F3: API test button — placed on same row as API key, in column 2
+        self._api_key_var = entries["api_key"]
+        api_test_frame = ttk.Frame(form_frame)
+        api_test_frame.grid(row=row - 1, column=2, padx=(8, 0), pady=4)
+        self._api_test_btn = ttk.Button(
+            api_test_frame,
+            text="Testiraj API / Test API",
+            command=self._test_api_key,
+        )
+        self._api_test_btn.pack(side=tk.LEFT)
+        self._api_test_status = ttk.Label(
+            api_test_frame, text="", font=("Arial", 9)
+        )
+        self._api_test_status.pack(side=tk.LEFT, padx=(6, 0))
+
         # Section: Generation
         ttk.Label(
             form_frame, text="Generiranje / Generation", font=("Arial", 11, "bold")
@@ -668,6 +1010,30 @@ class PipelineGUI:
         ).pack()
 
         self._settings_entries = entries
+
+        # L9: Attach tooltips to key settings fields
+        _tooltips = {
+            "general.company_oib": (
+                "OIB mora sadr\u017eavati to\u010dno 11 znamenki / "
+                "OIB must be exactly 11 digits"
+            ),
+            "generation.default_effective_date": (
+                "Format: GGGG-MM-DD (npr. 2026-03-01) / "
+                "Format: YYYY-MM-DD (e.g., 2026-03-01)"
+            ),
+            "api_key": (
+                "Anthropic API klju\u010d (po\u010dinje s 'sk-ant-') / "
+                "Anthropic API key (starts with 'sk-ant-')"
+            ),
+            "paths.source": (
+                "Putanja do mape s ugovorima / "
+                "Path to contracts folder"
+            ),
+        }
+        for key, tip_text in _tooltips.items():
+            widget = entry_widgets.get(key)
+            if widget:
+                ToolTip(widget, tip_text)
 
     def _pick_folder(self, var: tk.StringVar) -> None:
         path = filedialog.askdirectory(title="Odaberite mapu / Select folder")
@@ -766,6 +1132,71 @@ class PipelineGUI:
                 f"Spremanje nije uspjelo:\nSave failed:\n\n{exc}",
             )
 
+    # ── F3: API key connection test ──────────────────────────────────────
+
+    def _test_api_key(self) -> None:
+        """Test the Anthropic API key in a background thread."""
+        if self._api_key_var is None:
+            return
+        key = self._api_key_var.get().strip()
+        if not key:
+            messagebox.showwarning(
+                "Gre\u0161ka / Error",
+                "API klju\u010d je prazan / API key is empty",
+            )
+            return
+
+        self._api_test_btn.configure(state=tk.DISABLED)
+        self._api_test_status.configure(text="Testiranje... / Testing...", foreground="#3498db")
+
+        # Use a dedicated queue to avoid conflicts with main pipeline queue
+        api_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+        def _do_test() -> None:
+            try:
+                import anthropic
+
+                client = anthropic.Anthropic(api_key=key)
+                client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=10,
+                    messages=[{"role": "user", "content": "Hi"}],
+                )
+                api_queue.put(("api_test_ok", None))
+            except Exception as exc:
+                exc_type = type(exc).__name__
+                api_queue.put(("api_test_fail", f"{exc_type}: {exc}"))
+
+        def _poll_api_test() -> None:
+            try:
+                msg = api_queue.get_nowait()
+                self._api_test_btn.configure(state=tk.NORMAL)
+                if msg[0] == "api_test_ok":
+                    self._api_test_status.configure(
+                        text="Uspjeh! / Valid!", foreground="#27ae60"
+                    )
+                else:
+                    err_msg = msg[1] if len(msg) > 1 else "Unknown error"
+                    if "AuthenticationError" in str(err_msg):
+                        self._api_test_status.configure(
+                            text="Nevaljan / Invalid", foreground="#e74c3c"
+                        )
+                    else:
+                        self._api_test_status.configure(
+                            text="Gre\u0161ka / Error", foreground="#e74c3c"
+                        )
+                    messagebox.showwarning(
+                        "Gre\u0161ka / Error",
+                        f"Gre\u0161ka pri testiranju / Error testing API:\n{err_msg}",
+                    )
+                return
+            except queue.Empty:
+                pass
+            self.root.after(200, _poll_api_test)
+
+        threading.Thread(target=_do_test, daemon=True).start()
+        _poll_api_test()
+
     # ── Step 1: Setup ────────────────────────────────────────────────────
 
     def _build_setup(self, parent: ttk.Frame) -> None:
@@ -819,7 +1250,7 @@ class PipelineGUI:
         self._setup_cancel_btn = self._add_cancel_button(btn_frame)
 
         self._setup_progress = self._add_progress(parent)
-        self._setup_log = self._add_log_area(parent)
+        self._setup_log = self._add_log_area(parent, step_name="setup")
 
     def _run_setup(self, scan_only: bool = False) -> None:
         if self._running:
@@ -911,15 +1342,51 @@ class PipelineGUI:
         cfg = self._load_config_safe(quiet=True)
         self._add_config_warning(parent)
 
+        # L8: Show which clients were extracted
         if cfg and cfg.extractions_path.exists():
-            n_extracted = len(list(cfg.extractions_path.glob("*.json")))
+            json_files = sorted(cfg.extractions_path.glob("*.json"))
+            n_extracted = len(json_files)
             if n_extracted > 0:
+                # Build list of extracted client names from filenames
+                client_names = [f.stem for f in json_files]
+                if len(client_names) > 10:
+                    display_names = ", ".join(client_names[:10])
+                    display_names += f" ... i jo\u0161 {len(client_names) - 10} / ... and {len(client_names) - 10} more"
+                else:
+                    display_names = ", ".join(client_names)
+
                 ttk.Label(
                     parent,
                     text=f"Ve\u0107 ekstrahirano: {n_extracted} klijenata / "
                     f"Already extracted: {n_extracted} clients",
                     foreground="#27ae60",
+                ).pack(anchor=tk.W, pady=(0, 2))
+                ttk.Label(
+                    parent,
+                    text=display_names,
+                    foreground="#7f8c8d",
+                    font=("Arial", 9),
+                    wraplength=700,
+                    justify=tk.LEFT,
                 ).pack(anchor=tk.W, pady=(0, 8))
+
+        # F1: Client filter for extraction
+        filter_frame = ttk.Frame(parent)
+        filter_frame.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            filter_frame,
+            text="Klijenti (odvojeno zarezom) / Clients (comma-separated):",
+            font=("Arial", 9),
+        ).pack(side=tk.LEFT)
+        self._extract_clients_var = tk.StringVar()
+        extract_filter_entry = ttk.Entry(
+            filter_frame, textvariable=self._extract_clients_var, width=50
+        )
+        extract_filter_entry.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
+        ToolTip(
+            extract_filter_entry,
+            "Prazno = svi klijenti / Empty = all clients",
+        )
 
         # Buttons
         btn_frame = ttk.Frame(parent)
@@ -950,7 +1417,7 @@ class PipelineGUI:
         self._extract_cancel_btn = self._add_cancel_button(btn_frame)
 
         self._extract_progress = self._add_progress(parent)
-        self._extract_log = self._add_log_area(parent)
+        self._extract_log = self._add_log_area(parent, step_name="extraction")
 
     def _run_extraction(
         self, force: bool = False, spreadsheet_only: bool = False
@@ -968,6 +1435,13 @@ class PipelineGUI:
                 "Inventory not found. Run the 'Setup' step first.",
             )
             return
+
+        # F1: Parse client filter
+        client_names: list[str] | None = None
+        if self._extract_clients_var:
+            raw = self._extract_clients_var.get().strip()
+            if raw:
+                client_names = [c.strip() for c in raw.split(",") if c.strip()]
 
         # M32: Re-extract confirmation for force mode
         if force:
@@ -995,11 +1469,15 @@ class PipelineGUI:
                     self._queue.put(("extract_cancelled", None))
                     return
                 from doc_pipeline.phases.extraction import run_extraction
-                results = run_extraction(
-                    cfg,
-                    force=force,
-                    spreadsheet_only=spreadsheet_only,
-                )
+
+                kwargs: dict[str, Any] = {
+                    "force": force,
+                    "spreadsheet_only": spreadsheet_only,
+                }
+                if client_names:
+                    kwargs["client_names"] = client_names
+
+                results = run_extraction(cfg, **kwargs)
                 if self._cancel_event.is_set():
                     self._queue.put(("extract_cancelled", None))
                     return
@@ -1073,7 +1551,7 @@ class PipelineGUI:
         )
 
         instructions = ttk.Frame(parent)
-        instructions.pack(fill=tk.X, pady=(0, 16))
+        instructions.pack(fill=tk.X, pady=(0, 8))
 
         steps_text = (
             "Koraci / Steps:\n\n"
@@ -1099,7 +1577,7 @@ class PipelineGUI:
             font=("Arial", 11),
             bg="#fdf6e3",
             fg="#586e75",
-            height=16,
+            height=12,
             relief=tk.FLAT,
             padx=16,
             pady=12,
@@ -1110,7 +1588,7 @@ class PipelineGUI:
 
         # Buttons
         btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill=tk.X)
+        btn_frame.pack(fill=tk.X, pady=(4, 0))
 
         ttk.Button(
             btn_frame,
@@ -1123,6 +1601,54 @@ class PipelineGUI:
             text="Gotovo, nastavi / Done, Continue",
             command=lambda: self._show_step(4),
         ).pack(side=tk.LEFT, padx=(8, 0))
+
+        # F2: Per-client extraction preview
+        preview_frame = ttk.LabelFrame(
+            parent,
+            text="Pregled ekstrakcija po klijentu / Per-client extraction preview",
+            padding=8,
+        )
+        preview_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        # Client selector
+        selector_frame = ttk.Frame(preview_frame)
+        selector_frame.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            selector_frame,
+            text="Klijent / Client:",
+            font=("Arial", 10),
+        ).pack(side=tk.LEFT)
+
+        cfg = self._load_config_safe(quiet=True)
+        client_list: list[str] = []
+        if cfg and cfg.extractions_path.exists():
+            client_list = sorted(f.stem for f in cfg.extractions_path.glob("*.json"))
+
+        self._review_client_var = tk.StringVar()
+        client_combo = ttk.Combobox(
+            selector_frame,
+            textvariable=self._review_client_var,
+            values=client_list,
+            state="readonly",
+            width=40,
+        )
+        client_combo.pack(side=tk.LEFT, padx=(8, 0))
+        client_combo.bind("<<ComboboxSelected>>", lambda e: self._show_client_preview())
+
+        # Preview text area
+        self._review_preview_text = tk.Text(
+            preview_frame,
+            wrap=tk.WORD,
+            font=("Consolas" if sys.platform == "win32" else "Menlo", 10),
+            bg="#fdf6e3",
+            fg="#586e75",
+            height=8,
+            state=tk.DISABLED,
+            relief=tk.FLAT,
+            padx=8,
+            pady=8,
+        )
+        self._review_preview_text.pack(fill=tk.BOTH, expand=True)
 
     def _open_spreadsheet(self) -> None:
         cfg = self._load_config_safe()
@@ -1138,6 +1664,66 @@ class PipelineGUI:
             return
         self._open_file(cfg.spreadsheet_path)
 
+    # ── F2: Per-client extraction preview ─────────────────────────────────
+
+    def _show_client_preview(self) -> None:
+        """Show extraction summary for the selected client."""
+        client_name = self._review_client_var.get()
+        if not client_name:
+            return
+
+        cfg = self._load_config_safe(quiet=True)
+        if not cfg:
+            return
+
+        json_path = cfg.extractions_path / f"{client_name}.json"
+        if not json_path.exists():
+            self._set_review_preview(f"Datoteka nije prona\u0111ena / File not found:\n{json_path}")
+            return
+
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+
+            lines: list[str] = []
+            lines.append(f"Klijent / Client: {data.get('client_name', client_name)}")
+            lines.append(f"Broj ugovora / Contract #: {data.get('contract_number', 'N/A')}")
+            lines.append(f"Datum / Date: {data.get('document_date', 'N/A')}")
+            lines.append(
+                f"Pouzdanost / Confidence: {data.get('confidence', data.get('confidence_level', 'N/A'))}"
+            )
+
+            # Show pricing items
+            items = data.get("pricing_items", data.get("stavke", []))
+            lines.append(f"\nStavke ({len(items)}) / Pricing items ({len(items)}):")
+            lines.append("-" * 50)
+            for item in items:
+                name = item.get("name", item.get("naziv", "?"))
+                price = item.get("price", item.get("cijena", "?"))
+                currency = item.get("currency", item.get("valuta", ""))
+                unit = item.get("unit", item.get("jedinica", ""))
+                lines.append(f"  {name}: {price} {currency} {f'/ {unit}' if unit else ''}")
+
+            # Show notes/flags
+            notes = data.get("notes", data.get("napomene", ""))
+            flags = data.get("flags", data.get("oznake", []))
+            if notes:
+                lines.append(f"\nNapomene / Notes: {notes}")
+            if flags:
+                lines.append(f"Oznake / Flags: {', '.join(flags) if isinstance(flags, list) else flags}")
+
+            self._set_review_preview("\n".join(lines))
+        except Exception as exc:
+            self._set_review_preview(
+                f"Gre\u0161ka pri \u010ditanju / Error reading extraction:\n{exc}"
+            )
+
+    def _set_review_preview(self, text: str) -> None:
+        """Set the review preview text area content."""
+        self._review_preview_text.configure(state=tk.NORMAL)
+        self._review_preview_text.delete("1.0", tk.END)
+        self._review_preview_text.insert("1.0", text)
+        self._review_preview_text.configure(state=tk.DISABLED)
+
     # ── Step 4: Generation ───────────────────────────────────────────────
 
     def _build_generation(self, parent: ttk.Frame) -> None:
@@ -1149,7 +1735,7 @@ class PipelineGUI:
 
         # Starting number input
         num_frame = ttk.Frame(parent)
-        num_frame.pack(fill=tk.X, pady=(0, 8))
+        num_frame.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Label(
             num_frame,
@@ -1158,6 +1744,24 @@ class PipelineGUI:
         self._start_num_var = tk.StringVar(value="1")
         ttk.Entry(num_frame, textvariable=self._start_num_var, width=8).pack(
             side=tk.LEFT, padx=(8, 0)
+        )
+
+        # F1: Client filter for generation
+        filter_frame = ttk.Frame(parent)
+        filter_frame.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            filter_frame,
+            text="Klijenti (odvojeno zarezom) / Clients (comma-separated):",
+            font=("Arial", 9),
+        ).pack(side=tk.LEFT)
+        self._gen_clients_var = tk.StringVar()
+        gen_filter_entry = ttk.Entry(
+            filter_frame, textvariable=self._gen_clients_var, width=50
+        )
+        gen_filter_entry.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
+        ToolTip(
+            gen_filter_entry,
+            "Prazno = svi odobreni klijenti / Empty = all approved clients",
         )
 
         # Buttons
@@ -1189,7 +1793,7 @@ class PipelineGUI:
         self._gen_cancel_btn = self._add_cancel_button(btn_frame)
 
         self._gen_progress = self._add_progress(parent)
-        self._gen_log = self._add_log_area(parent)
+        self._gen_log = self._add_log_area(parent, step_name="generation")
 
     def _get_start_number(self) -> int | None:
         try:
@@ -1205,6 +1809,14 @@ class PipelineGUI:
             )
             return None
 
+    def _get_gen_client_names(self) -> list[str] | None:
+        """Parse the client filter for the generation step (F1)."""
+        if self._gen_clients_var:
+            raw = self._gen_clients_var.get().strip()
+            if raw:
+                return [c.strip() for c in raw.split(",") if c.strip()]
+        return None
+
     def _run_preview(self) -> None:
         if self._running:
             return
@@ -1214,6 +1826,8 @@ class PipelineGUI:
         start = self._get_start_number()
         if start is None:
             return
+
+        client_names = self._get_gen_client_names()
 
         self._running = True
         self._cancel_event.clear()
@@ -1230,7 +1844,15 @@ class PipelineGUI:
                     self._queue.put(("preview_cancelled", None))
                     return
                 from doc_pipeline.phases.generation import run_generation
-                run_generation(cfg, start_number=start, dry_run=True)
+
+                kwargs: dict[str, Any] = {
+                    "start_number": start,
+                    "dry_run": True,
+                }
+                if client_names:
+                    kwargs["client_names"] = client_names
+
+                run_generation(cfg, **kwargs)
                 if self._cancel_event.is_set():
                     self._queue.put(("preview_cancelled", None))
                     return
@@ -1272,6 +1894,8 @@ class PipelineGUI:
         if start is None:
             return
 
+        client_names = self._get_gen_client_names()
+
         if not messagebox.askyesno(
             "Potvrda / Confirm",
             "Jeste li sigurni da \u017eelite generirati anekse?\n"
@@ -1296,7 +1920,12 @@ class PipelineGUI:
                     self._queue.put(("gen_cancelled", None))
                     return
                 from doc_pipeline.phases.generation import run_generation
-                paths = run_generation(cfg, start_number=start)
+
+                kwargs: dict[str, Any] = {"start_number": start}
+                if client_names:
+                    kwargs["client_names"] = client_names
+
+                paths = run_generation(cfg, **kwargs)
                 if self._cancel_event.is_set():
                     self._queue.put(("gen_cancelled", None))
                     return

@@ -1,7 +1,8 @@
-"""Rich progress bars and summary table formatting."""
+"""Rich progress bars, summary table formatting, and progress tracking utilities."""
 
 from __future__ import annotations
 
+import shutil
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -11,6 +12,42 @@ if TYPE_CHECKING:
     from doc_pipeline.models import ClientEntry, Inventory
 
 console = Console()
+
+
+class ProgressTracker:
+    """Simple progress tracker for pipeline operations.
+
+    Usable by both GUI and CLI code to track the state of a multi-step
+    operation without coupling to any particular rendering backend.
+    """
+
+    def __init__(self, total: int, description: str = "Processing") -> None:
+        self.total = total
+        self.current = 0
+        self.description = description
+
+    def advance(self, amount: int = 1) -> None:
+        self.current = min(self.current + amount, self.total)
+
+    def reset(self) -> None:
+        self.current = 0
+
+    @property
+    def percentage(self) -> float:
+        return (self.current / self.total * 100) if self.total > 0 else 0
+
+    @property
+    def is_complete(self) -> bool:
+        return self.current >= self.total
+
+    def __str__(self) -> str:
+        return f"{self.description}: {self.current}/{self.total} ({self.percentage:.0f}%)"
+
+    def __repr__(self) -> str:
+        return (
+            f"ProgressTracker(total={self.total}, current={self.current}, "
+            f"description={self.description!r})"
+        )
 
 
 def print_inventory_summary(inventory: Inventory) -> None:
@@ -35,6 +72,13 @@ def print_inventory_summary(inventory: Inventory) -> None:
     console.print(table)
 
 
+def _truncate(text: str, width: int) -> str:
+    """Truncate *text* to *width* characters, appending '...' if needed."""
+    if len(text) <= width:
+        return text
+    return text[: max(width - 3, 0)] + "..."
+
+
 def print_client_table(
     clients: list[ClientEntry],
     *,
@@ -42,6 +86,14 @@ def print_client_table(
     show_files: bool = False,
 ) -> None:
     """Print a table of clients."""
+    # Dynamically size the three variable-width columns based on terminal width.
+    # Fixed columns (#, Status, Files, Selected, Annexes) take ~30 chars combined.
+    term_width = shutil.get_terminal_size().columns
+    variable_space = term_width - 30
+    name_width = max(20, variable_space // 3)
+    main_width = max(20, variable_space // 3)
+    flags_width = max(20, variable_space // 3)
+
     table = Table(title=title, show_lines=True)
     table.add_column("#", justify="right", style="dim")
     table.add_column("Client", style="bold")
@@ -68,13 +120,13 @@ def print_client_table(
 
         table.add_row(
             str(i),
-            client.client_name,
+            _truncate(client.client_name, name_width),
             f"[{status_style}]{client.status.value}[/{status_style}]",
             str(len(client.files)),
             str(len(client.selected_files)),
-            main if len(main) <= 40 else main[:37] + "...",
+            _truncate(main, main_width),
             str(n_annex),
-            flags if len(flags) <= 50 else flags[:47] + "...",
+            _truncate(flags, flags_width),
         )
 
     console.print(table)
