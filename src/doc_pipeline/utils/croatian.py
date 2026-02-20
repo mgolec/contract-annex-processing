@@ -53,7 +53,7 @@ def hr_date(d: date | datetime) -> str:
     return f"{d.day}. {MONTHS_GENITIVE[d.month]} {d.year}."
 
 
-def hr_number(value: float, decimals: int = 2) -> str:
+def hr_number(value: float | Decimal, decimals: int = 2) -> str:
     """Format a number in Croatian style: '25.000,00' (dot=thousands, comma=decimal)."""
     formatted = f"{value:,.{decimals}f}"
     # Swap separators: English (1,000.00) → Croatian (1.000,00)

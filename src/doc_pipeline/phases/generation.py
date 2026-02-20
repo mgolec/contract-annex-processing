@@ -6,7 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -28,7 +28,7 @@ class NewPrice:
     """A single new price entry from Sheet 2."""
 
     service_name: str
-    new_price_eur: float
+    new_price_eur: Decimal
     effective_date: date | None = None
 
 
@@ -211,8 +211,8 @@ def read_approved_clients(
                     continue
             else:
                 try:
-                    price_val = float(new_price)
-                except (TypeError, ValueError):
+                    price_val = Decimal(str(new_price))
+                except (TypeError, ValueError, InvalidOperation):
                     continue
 
             approved[folder].new_prices.append(
@@ -813,7 +813,7 @@ def run_generation(
         context = build_context(extraction, ac, config, annex_number, eff_date)
 
         # M23: Validate critical context fields before rendering
-        _PLACEHOLDER_PATTERNS = ["___", "________", "N/A", ""]
+        _PLACEHOLDER_PATTERNS = ["___", "________", "N/A"]
         _REQUIRED_CONTEXT_FIELDS = ["korisnik_naziv", "korisnik_oib", "broj_ugovora"]
         ctx_warnings = []
         for ctx_field in _REQUIRED_CONTEXT_FIELDS:
