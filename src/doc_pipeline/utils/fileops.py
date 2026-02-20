@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fcntl
+import os
 import re
 import shutil
 from collections import defaultdict
@@ -20,8 +22,13 @@ from doc_pipeline.models import (
 )
 from doc_pipeline.utils.croatian import nfc
 
-# Files to skip during copy
+# Files to skip during copy (all lowercase for case-insensitive matching)
 SKIP_FILES = {".ds_store", "thumbs.db", "desktop.ini", ".gitkeep"}
+
+
+def _ignore_junk(directory: str, files: list[str]) -> set[str]:
+    """Case-insensitive junk file filter for shutil.copytree."""
+    return {f for f in files if f.lower() in SKIP_FILES or f.startswith('._')}
 
 # Valid document extensions
 VALID_EXTENSIONS = {".docx", ".doc", ".pdf"}
@@ -317,6 +324,7 @@ def copy_source_tree(
 
     Returns (files_copied, files_skipped).
     Handles the loose OU Nogolica file at root by creating a virtual folder.
+    Uses atomic rename with rollback on --force to avoid data loss.
     """
     if dest.exists() and not force:
         raise FileExistsError(
@@ -324,58 +332,76 @@ def copy_source_tree(
             "Use --force to overwrite."
         )
 
-    if dest.exists() and force:
-        shutil.rmtree(dest)
+    # Atomic copy with rollback when force-overwriting
+    backup = dest.with_name(dest.name + "_backup")
+    try:
+        if dest.exists() and force:
+            # Move existing to backup instead of deleting immediately
+            if backup.exists():
+                shutil.rmtree(backup)
+            dest.rename(backup)
 
-    dest.mkdir(parents=True, exist_ok=True)
+        dest.mkdir(parents=True, exist_ok=True)
 
-    copied = 0
-    skipped = 0
+        copied = 0
+        skipped = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Copying files...", total=None)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Copying files...", total=None)
 
-        for item in sorted(source.iterdir()):
-            if item.name.lower() in SKIP_FILES:
-                skipped += 1
-                continue
+            for item in sorted(source.iterdir()):
+                if item.name.lower() in SKIP_FILES or item.name.startswith('._'):
+                    skipped += 1
+                    continue
 
-            if item.is_dir():
-                # Copy entire client folder
-                dest_dir = dest / item.name
-                shutil.copytree(
-                    item,
-                    dest_dir,
-                    ignore=shutil.ignore_patterns(*SKIP_FILES),
-                )
-                # Count files in copied tree
-                copied += sum(1 for f in dest_dir.rglob("*") if f.is_file())
-                progress.update(task, description=f"Copied: {item.name}")
+                if item.is_dir():
+                    # Copy entire client folder
+                    dest_dir = dest / item.name
+                    shutil.copytree(
+                        item,
+                        dest_dir,
+                        ignore=_ignore_junk,
+                    )
+                    # Count files in copied tree
+                    copied += sum(1 for f in dest_dir.rglob("*") if f.is_file())
+                    progress.update(task, description=f"Copied: {item.name}")
 
-            elif item.is_file() and item.suffix.lower() in VALID_EXTENSIONS:
-                # Loose file at root — create virtual folder
-                # Extract client name by removing common prefixes like "Ugovor o održavanju"
-                virtual_name = item.stem
-                name_lower = nfc(virtual_name.lower())
-                for prefix in [
-                    "ugovor o održavanju ",
-                    "ugovor o servisiranju ",
-                    "ugovor o pružanju usluga ",
-                    "ugovor ",
-                ]:
-                    if name_lower.startswith(nfc(prefix)):
-                        virtual_name = virtual_name[len(prefix):]
-                        break
-                virtual_name = virtual_name.strip()
-                virtual_dir = dest / virtual_name
-                virtual_dir.mkdir(exist_ok=True)
-                shutil.copy2(item, virtual_dir / item.name)
-                copied += 1
-                progress.update(task, description=f"Copied loose file: {item.name}")
+                elif item.is_file() and item.suffix.lower() in VALID_EXTENSIONS:
+                    # Loose file at root — create virtual folder
+                    # Extract client name by removing common prefixes like "Ugovor o održavanju"
+                    virtual_name = item.stem
+                    name_lower = nfc(virtual_name.lower())
+                    for prefix in [
+                        "ugovor o održavanju ",
+                        "ugovor o servisiranju ",
+                        "ugovor o pružanju usluga ",
+                        "ugovor ",
+                    ]:
+                        if name_lower.startswith(nfc(prefix)):
+                            virtual_name = virtual_name[len(prefix):]
+                            break
+                    virtual_name = virtual_name.strip()
+                    virtual_dir = dest / virtual_name
+                    virtual_dir.mkdir(exist_ok=True)
+                    shutil.copy2(item, virtual_dir / item.name)
+                    copied += 1
+                    progress.update(task, description=f"Copied loose file: {item.name}")
+
+        # Success — remove backup if it exists
+        if backup.exists():
+            shutil.rmtree(backup)
+
+    except Exception:
+        # Rollback — remove partial dest, restore backup
+        if dest.exists():
+            shutil.rmtree(dest)
+        if backup.exists():
+            backup.rename(dest)
+        raise
 
     return copied, skipped
 
@@ -473,3 +499,44 @@ def discover_clients(source_dir: Path) -> list[ClientEntry]:
             clients.append(client)
 
     return clients
+
+
+# ── Concurrent run protection ────────────────────────────────────────────────
+
+
+class PipelineLock:
+    """Simple file-based lock to prevent concurrent pipeline runs."""
+
+    def __init__(self, lock_path: Path):
+        self.lock_path = lock_path
+        self._fd = None
+
+    def acquire(self) -> bool:
+        self._fd = open(self.lock_path, 'w')
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._fd.write(str(os.getpid()))
+            self._fd.flush()
+            return True
+        except (IOError, OSError):
+            self._fd.close()
+            self._fd = None
+            return False
+
+    def release(self):
+        if self._fd:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            self._fd.close()
+            self._fd = None
+            try:
+                self.lock_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def __enter__(self):
+        if not self.acquire():
+            raise RuntimeError("Another pipeline instance is already running")
+        return self
+
+    def __exit__(self, *args):
+        self.release()

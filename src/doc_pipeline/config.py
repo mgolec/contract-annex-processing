@@ -102,6 +102,18 @@ class PipelineConfig(BaseModel):
     def template_path(self) -> Path:
         return self._resolve(self.paths.template)
 
+    def validate_for_extraction(self) -> list[str]:
+        """Validate config is ready for extraction phase. Returns list of error messages."""
+        errors = []
+        if not self.anthropic_api_key:
+            errors.append("ANTHROPIC_API_KEY is not set (check .env file)")
+        elif not self.anthropic_api_key.startswith(("sk-ant-", "sk-")):
+            errors.append(
+                f"ANTHROPIC_API_KEY has unexpected format "
+                f"(starts with '{self.anthropic_api_key[:6]}...')"
+            )
+        return errors
+
     def _resolve(self, p: str) -> Path:
         path = Path(p)
         if path.is_absolute():
@@ -129,7 +141,12 @@ def load_config() -> PipelineConfig:
                 continue
             key, _, val = line.partition("=")
             if key.strip() == "ANTHROPIC_API_KEY":
-                api_key = val.strip()
+                val = val.strip()
+                # Strip surrounding quotes (common in .env files)
+                if (val.startswith('"') and val.endswith('"')) or \
+                   (val.startswith("'") and val.endswith("'")):
+                    val = val[1:-1]
+                api_key = val
                 break
 
     data["anthropic_api_key"] = api_key

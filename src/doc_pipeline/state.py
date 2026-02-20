@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+
+class PhaseStatus(str, Enum):
+    """Status of a pipeline phase."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class PhaseState(BaseModel):
@@ -14,7 +25,7 @@ class PhaseState(BaseModel):
 
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    status: str = "pending"  # pending | running | completed | failed
+    status: PhaseStatus = PhaseStatus.PENDING
     error: str | None = None
 
 
@@ -27,23 +38,42 @@ class RunState(BaseModel):
 
     def mark_started(self, phase: str) -> None:
         self.phases[phase] = PhaseState(
-            started_at=datetime.now(), status="running"
+            started_at=datetime.now(), status=PhaseStatus.RUNNING
         )
 
     def mark_completed(self, phase: str) -> None:
-        if phase in self.phases:
-            self.phases[phase].completed_at = datetime.now()
-            self.phases[phase].status = "completed"
+        if phase not in self.phases:
+            raise KeyError(f"Unknown phase: {phase}")
+        self.phases[phase].completed_at = datetime.now()
+        self.phases[phase].status = PhaseStatus.COMPLETED
 
     def mark_failed(self, phase: str, error: str) -> None:
-        if phase in self.phases:
-            self.phases[phase].completed_at = datetime.now()
-            self.phases[phase].status = "failed"
-            self.phases[phase].error = error
+        if phase not in self.phases:
+            raise KeyError(f"Unknown phase: {phase}")
+        self.phases[phase].completed_at = datetime.now()
+        self.phases[phase].status = PhaseStatus.FAILED
+        self.phases[phase].error = error
+
+    def check_stale_running(self) -> list[str]:
+        """Return phase names stuck in 'running' state (likely from a crash)."""
+        return [name for name, phase in self.phases.items()
+                if phase.status == PhaseStatus.RUNNING]
+
+    def reset_phase(self, phase_name: str) -> None:
+        """Reset a phase back to PENDING status."""
+        if phase_name in self.phases:
+            self.phases[phase_name] = PhaseState(status=PhaseStatus.PENDING)
+
+    def reset_all(self) -> None:
+        """Reset all phases to PENDING status."""
+        for phase_name in self.phases:
+            self.phases[phase_name] = PhaseState(status=PhaseStatus.PENDING)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
 
     @classmethod
     def load(cls, path: Path) -> RunState:

@@ -78,6 +78,18 @@ def extract(
     from doc_pipeline.phases.extraction import run_extraction
 
     config = load_config()
+
+    # Prerequisite checks
+    if not config.inventory_path.exists():
+        console.print("[red]Inventar nije pronađen. Pokrenite 'pipeline setup' prvo.[/red]")
+        console.print("[red]No inventory found. Run 'pipeline setup' first.[/red]")
+        raise typer.Exit(1)
+
+    if not config.data_source_path.exists():
+        console.print("[red]Radna kopija nije pronađena. Pokrenite 'pipeline setup' prvo.[/red]")
+        console.print("[red]Working copy (data/source/) not found. Run 'pipeline setup' first.[/red]")
+        raise typer.Exit(1)
+
     client_names = [c.strip() for c in clients.split(",")] if clients else None
     run_extraction(
         config,

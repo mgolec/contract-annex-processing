@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import atexit
 import platform
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from doc_pipeline.utils.croatian import nfc
+
+
+# ── LibreOffice profile management ───────────────────────────────────────────
+
+_lo_profile_dir: Path | None = None
+
+
+def _get_lo_profile_dir() -> Path:
+    """Get a unique LibreOffice profile directory, cleaned up on exit."""
+    global _lo_profile_dir
+    if _lo_profile_dir is None:
+        _lo_profile_dir = Path(tempfile.mkdtemp(prefix="lo_profile_"))
+        atexit.register(lambda: shutil.rmtree(str(_lo_profile_dir), ignore_errors=True))
+    return _lo_profile_dir
 
 
 # ── LibreOffice discovery ────────────────────────────────────────────────────
@@ -64,7 +80,7 @@ def convert_doc_to_docx(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Use a dedicated user profile to avoid conflicts with running LibreOffice
-    profile_dir = Path("/tmp/lo_profile_pipeline")
+    profile_dir = _get_lo_profile_dir()
 
     cmd = [
         soffice,
@@ -155,16 +171,38 @@ def extract_docx_text(docx_path: Path) -> str:
 
 
 def _extract_table_from_element(tbl_element) -> list[list[str]]:
-    """Extract rows/cells from a w:tbl XML element."""
+    """Extract rows/cells from a w:tbl XML element.
+
+    Only processes direct child rows to avoid picking up rows from nested tables.
+    """
     from docx.oxml.ns import qn
 
     rows: list[list[str]] = []
+    # Only get direct child w:tr elements (not from nested tables)
+    # w:tr may be direct children of w:tbl, so use iter and filter by parent
     for tr in tbl_element.iter(qn("w:tr")):
+        # Skip rows that belong to nested tables
+        parent = tr.getparent()
+        if parent is not None and parent is not tbl_element:
+            # This row belongs to a nested table, skip it
+            continue
         cells: list[str] = []
-        for tc in tr.iter(qn("w:tc")):
-            # Get all text content within the cell
+        for tc in tr.findall(qn("w:tc")):
+            # Get all text content within the cell, but skip nested tables
             cell_texts = []
             for p in tc.iter(qn("w:p")):
+                # Ensure the paragraph is not inside a nested table within this cell
+                p_parent = p.getparent()
+                # Walk up to check if we're inside a nested w:tbl
+                in_nested_table = False
+                current = p_parent
+                while current is not None and current is not tc:
+                    if current.tag == qn("w:tbl"):
+                        in_nested_table = True
+                        break
+                    current = current.getparent()
+                if in_nested_table:
+                    continue
                 run_texts = []
                 for r in p.iter(qn("w:t")):
                     if r.text:

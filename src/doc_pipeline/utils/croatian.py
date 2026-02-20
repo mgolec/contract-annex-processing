@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 
 
 # Genitive case month names used in Croatian date formatting
@@ -61,16 +62,27 @@ def hr_number(value: float, decimals: int = 2) -> str:
     return formatted
 
 
-def parse_hr_number(text: str) -> float | None:
-    """Parse a Croatian-formatted number: '25.000,00' → 25000.0.
+def parse_hr_number(text: str) -> Decimal | None:
+    """Parse a Croatian-formatted number: '25.000,00' → Decimal('25000.00').
     Returns None if parsing fails.
     """
+    if not text or not isinstance(text, str):
+        return None
     text = text.strip()
     if not text:
         return None
+    # Strip currency symbols
+    for suffix in (" EUR", " HRK", " kn", " €", "EUR", "HRK", "kn", "€"):
+        if text.endswith(suffix):
+            text = text[:-len(suffix)].strip()
+    # Handle negative
+    negative = text.startswith("-")
+    if negative:
+        text = text[1:].strip()
+    # Croatian format: 1.000,00 → 1000.00
+    text = text.replace(".", "").replace(",", ".")
     try:
-        # Remove dots (thousands separator), replace comma with dot (decimal)
-        cleaned = text.replace(".", "").replace(",", ".")
-        return float(cleaned)
-    except ValueError:
+        result = Decimal(text)
+        return -result if negative else result
+    except (InvalidOperation, ValueError):
         return None

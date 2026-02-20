@@ -84,9 +84,11 @@ def run_setup(
 
         if dry_run:
             console.print("  [dim]Would scan and classify files (--dry-run)[/dim]")
-            state.mark_completed("setup")
-            state.save(state_path)
-            raise SystemExit(0)
+            # Do NOT mark state as completed in dry-run mode
+            return Inventory(
+                source_path=str(source_path),
+                working_path=str(dest_path),
+            )
 
         # ── Step 2: Scan, classify, dedup, chain ──────────────────────────
         console.print("\n  Scanning and classifying files...")

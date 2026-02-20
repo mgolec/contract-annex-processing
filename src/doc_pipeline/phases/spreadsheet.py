@@ -43,8 +43,7 @@ _BLUE_FILL = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="so
 _LOCKED = Protection(locked=True)
 _UNLOCKED = Protection(locked=False)
 
-# HRK conversion rate
-HRK_RATE = 7.53450
+# HRK conversion rate — removed hardcoded constant; now passed from config
 
 
 # ── Confidence label mapping ─────────────────────────────────────────────────
@@ -224,6 +223,8 @@ def _build_sheet1(
 def _build_sheet2(
     ws: Worksheet,
     extractions: list[ClientExtraction],
+    *,
+    hrk_rate: float = 7.53450,
 ) -> None:
     """Build 'Cijene' (Pricing) sheet."""
     ws.title = "Cijene"
@@ -265,7 +266,7 @@ def _build_sheet2(
             _style_cell(ws, row_idx, 4, item.currency.value)
             # E: EUR equivalent (formula)
             eur_formula = (
-                f'=IF(D{row_idx}="HRK",C{row_idx}/{HRK_RATE},C{row_idx})'
+                f'=IF(D{row_idx}="HRK",C{row_idx}/{hrk_rate},C{row_idx})'
             )
             _style_cell(ws, row_idx, 5, eur_formula)
             ws.cell(row=row_idx, column=5).number_format = '#,##0.00'
@@ -373,7 +374,7 @@ def generate_spreadsheet(
 
     # Sheet 2: Pricing
     ws2 = wb.create_sheet()
-    _build_sheet2(ws2, extractions)
+    _build_sheet2(ws2, extractions, hrk_rate=config.currency.hrk_to_eur_rate)
 
     # Sheet 3: File inventory
     ws3 = wb.create_sheet()

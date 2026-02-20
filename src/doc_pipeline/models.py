@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import enum
 import json
+import os
+import unicodedata
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────────
@@ -92,6 +95,13 @@ class ClientEntry(BaseModel):
     document_chain: DocumentChain | None = None
     flags: list[str] = Field(default_factory=list)
 
+    @field_validator('client_name', 'folder_name', mode='before')
+    @classmethod
+    def normalize_nfc(cls, v):
+        if isinstance(v, str):
+            return unicodedata.normalize('NFC', v)
+        return v
+
     @property
     def selected_files(self) -> list[FileEntry]:
         return [f for f in self.files if f.status == FileStatus.SELECTED]
@@ -141,7 +151,9 @@ class Inventory(BaseModel):
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
 
     @classmethod
     def load(cls, path: Path) -> Inventory:
@@ -171,9 +183,25 @@ class PricingItem(BaseModel):
     unit: str = ""
     quantity: str = ""
     price_raw: str = ""
-    price_value: float | None = None
+    price_value: Decimal | None = None
     currency: Currency = Currency.EUR
     source_section: str = ""
+
+    @field_validator('price_value', mode='before')
+    @classmethod
+    def coerce_to_decimal(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, Decimal):
+            return v
+        return Decimal(str(v))
+
+    @field_validator('service_name', 'designation', mode='before')
+    @classmethod
+    def normalize_nfc_pricing(cls, v):
+        if isinstance(v, str):
+            return unicodedata.normalize('NFC', v)
+        return v
 
 
 class ExtractionResult(BaseModel):
@@ -191,6 +219,25 @@ class ExtractionResult(BaseModel):
     notes: list[str] = Field(default_factory=list)
     raw_text_length: int = 0
 
+    @field_validator('client_name', 'document_type', 'contract_number',
+                     'parent_contract_number', mode='before')
+    @classmethod
+    def normalize_nfc_extraction(cls, v):
+        if isinstance(v, str):
+            return unicodedata.normalize('NFC', v)
+        return v
+
+    @field_validator('document_date', mode='before')
+    @classmethod
+    def validate_date_string(cls, v):
+        if not v or v == "":
+            return ""
+        v = str(v).strip()
+        # Accept various date formats - just ensure it's not garbage
+        if len(v) > 50:
+            return ""  # Clearly not a date
+        return unicodedata.normalize('NFC', v)
+
 
 class ClientExtraction(BaseModel):
     """Wrapper with pipeline metadata, saved to data/extractions/{folder}.json."""
@@ -205,7 +252,9 @@ class ClientExtraction(BaseModel):
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
 
     @classmethod
     def load(cls, path: Path) -> ClientExtraction:

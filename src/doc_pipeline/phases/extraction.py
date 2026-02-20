@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import anthropic
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -216,6 +217,17 @@ def _parse_extraction_response(tool_input: dict) -> ExtractionResult:
 # ── Sync extraction (one client at a time) ──────────────────────────────────
 
 
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds, doubles each retry
+
+_RETRYABLE_ERRORS = (
+    anthropic.RateLimitError,
+    anthropic.APIConnectionError,
+    anthropic.InternalServerError,
+    anthropic.APITimeoutError,
+)
+
+
 def _extract_sync(
     client,
     model: str,
@@ -225,22 +237,48 @@ def _extract_sync(
     """Call Claude API synchronously for a single document."""
     tool = _build_tool_schema()
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=SYSTEM_PROMPT,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "extract_contract_data"},
-        messages=[
-            {
-                "role": "user",
-                "content": USER_PROMPT_TEMPLATE.format(
-                    folder_name=folder_name,
-                    document_text=document_text[:100_000],  # Safety limit
-                ),
-            }
-        ],
-    )
+    # M24: Warn if document text exceeds the safety limit
+    if len(document_text) > 100_000:
+        console.print(
+            f"  [yellow]Upozorenje: tekst za {folder_name} skraćen sa "
+            f"{len(document_text):,} na 100.000 znakova[/yellow]"
+        )
+        console.print(
+            f"  [yellow]Warning: {folder_name} text truncated from "
+            f"{len(document_text):,} to 100,000 chars[/yellow]"
+        )
+        document_text = document_text[:100_000]
+
+    # C3: Retry with exponential backoff for transient API errors
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                system=SYSTEM_PROMPT,
+                tools=[tool],
+                tool_choice={"type": "tool", "name": "extract_contract_data"},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": USER_PROMPT_TEMPLATE.format(
+                            folder_name=folder_name,
+                            document_text=document_text,
+                        ),
+                    }
+                ],
+                timeout=120.0,  # H8: Explicit request timeout
+            )
+            break  # Success
+        except _RETRYABLE_ERRORS as e:
+            if attempt == MAX_RETRIES:
+                raise  # Give up after max retries
+            delay = RETRY_DELAY * (2 ** attempt)
+            console.print(
+                f"  [yellow]API error (attempt {attempt + 1}/{MAX_RETRIES}): "
+                f"{e}. Retrying in {delay}s...[/yellow]"
+            )
+            time.sleep(delay)
 
     # Find the tool_use content block
     for block in response.content:
@@ -275,6 +313,18 @@ def _extract_batch(
     # Build batch requests
     batch_requests = []
     for custom_id, folder_name, document_text in requests:
+        # M24: Warn if document text exceeds the safety limit
+        if len(document_text) > 100_000:
+            console.print(
+                f"  [yellow]Upozorenje: tekst za {folder_name} skraćen sa "
+                f"{len(document_text):,} na 100.000 znakova[/yellow]"
+            )
+            console.print(
+                f"  [yellow]Warning: {folder_name} text truncated from "
+                f"{len(document_text):,} to 100,000 chars[/yellow]"
+            )
+            document_text = document_text[:100_000]
+
         batch_requests.append({
             "custom_id": custom_id,
             "params": {
@@ -288,16 +338,28 @@ def _extract_batch(
                         "role": "user",
                         "content": USER_PROMPT_TEMPLATE.format(
                             folder_name=folder_name,
-                            document_text=document_text[:100_000],
+                            document_text=document_text,
                         ),
                     }
                 ],
             },
         })
 
-    # Submit batch
+    # Submit batch — C3: retry with exponential backoff for transient API errors
     console.print(f"\n  Submitting batch of {len(batch_requests)} requests...")
-    batch = client.messages.batches.create(requests=batch_requests)
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            batch = client.messages.batches.create(requests=batch_requests)
+            break  # Success
+        except _RETRYABLE_ERRORS as e:
+            if attempt == MAX_RETRIES:
+                raise
+            delay = RETRY_DELAY * (2 ** attempt)
+            console.print(
+                f"  [yellow]Batch submit error (attempt {attempt + 1}/{MAX_RETRIES}): "
+                f"{e}. Retrying in {delay}s...[/yellow]"
+            )
+            time.sleep(delay)
     batch_id = batch.id
     console.print(f"  Batch ID: {batch_id}")
 
@@ -357,8 +419,12 @@ def _extract_batch(
             if not extracted and custom_id not in results:
                 results[custom_id] = "No tool_use block in response"
         else:
+            # H15: Extract detailed error message from batch result
             error_type = result.result.type
-            results[custom_id] = f"Batch error: {error_type}"
+            error_msg = "unknown"
+            if hasattr(result.result, 'error') and result.result.error:
+                error_msg = getattr(result.result.error, 'message', str(result.result.error))
+            results[custom_id] = f"Batch error: {error_type} — {error_msg}"
 
     return results
 
@@ -432,8 +498,6 @@ def run_extraction(
         skip_conversion: Skip .doc → .docx conversion.
         spreadsheet_only: Only regenerate spreadsheet from existing extractions.
     """
-    import anthropic
-
     console.print("\n[bold]Phase 1: Extraction[/bold]")
 
     # Load inventory
@@ -741,8 +805,9 @@ def _load_existing_extractions(
             try:
                 ce = ClientExtraction.load(json_path)
                 extractions.append(ce)
-            except Exception:
-                pass
+            except Exception as e:
+                console.print(f"  [yellow]Upozorenje: ne mogu učitati {json_path.name}: {e}[/yellow]")
+                console.print(f"  [yellow]Warning: could not load {json_path.name}: {e}[/yellow]")
 
     return extractions
 

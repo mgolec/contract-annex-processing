@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -16,8 +17,7 @@ from doc_pipeline.models import ClientExtraction, Currency, PricingItem
 from doc_pipeline.utils.croatian import hr_date, hr_number, nfc
 from doc_pipeline.utils.progress import console
 
-# Fixed HRK → EUR conversion rate
-HRK_TO_EUR = Decimal("7.53450")
+# HRK → EUR conversion rate — no longer hardcoded; sourced from config.currency.hrk_to_eur_rate
 
 
 # ── Data classes for spreadsheet read-back ──────────────────────────────────
@@ -64,7 +64,10 @@ def _parse_date_cell(value) -> date | None:
     return None
 
 
-def read_approved_clients(spreadsheet_path: Path) -> list[ApprovedClient]:
+def read_approved_clients(
+    spreadsheet_path: Path,
+    config: PipelineConfig | None = None,
+) -> list[ApprovedClient]:
     """Read approved clients and their new prices from the control spreadsheet.
 
     Sheet 1 "Pregled klijenata":
@@ -74,96 +77,169 @@ def read_approved_clients(spreadsheet_path: Path) -> list[ApprovedClient]:
     Sheet 2 "Cijene":
       Col A = client name, Col B = service name,
       Col G = new price EUR, Col I = effective date
+
+    Args:
+        spreadsheet_path: Path to the control spreadsheet.
+        config: Optional pipeline config for HRK rate fallback.
     """
+    # C7: data_only=True means Excel formula results are read as cached values.
+    # If the file was saved by openpyxl (not Excel), formula cells will return None.
+    # We handle this below for the EUR equivalent column (E) by computing in Python.
     wb = load_workbook(str(spreadsheet_path), data_only=True)
 
-    # ── Sheet 1: find approved clients ──────────────────────────────
-    ws1 = wb["Pregled klijenata"]
-    approved: dict[str, ApprovedClient] = {}
+    try:
+        # ── Sheet 1: find approved clients ──────────────────────────────
+        ws1 = wb["Pregled klijenata"]
 
-    for row in ws1.iter_rows(min_row=2, values_only=False):
-        client_name = row[0].value  # Col A
-        folder_name = row[1].value  # Col B
-        status = row[8].value       # Col I
+        # C2: Validate Sheet 1 headers match expected structure
+        EXPECTED_HEADERS_S1 = {
+            1: "Klijent",
+            2: "Mapa",
+            9: "Status",
+        }
+        for col, expected in EXPECTED_HEADERS_S1.items():
+            actual = ws1.cell(1, col).value
+            if actual != expected:
+                raise ValueError(
+                    f"Neočekivano zaglavlje u stupcu {col} (Sheet 1): '{actual}' "
+                    f"(očekivano: '{expected}')\n"
+                    f"Unexpected header in column {col} (Sheet 1): '{actual}' "
+                    f"(expected: '{expected}')\n"
+                    f"The spreadsheet may have been modified. Please check the column structure."
+                )
 
-        if not folder_name or not status:
-            continue
-        if str(status).strip() != "Odobreno":
-            continue
+        approved: dict[str, ApprovedClient] = {}
 
-        approved[str(folder_name).strip()] = ApprovedClient(
-            client_name=str(client_name or folder_name).strip(),
-            folder_name=str(folder_name).strip(),
-        )
+        for row in ws1.iter_rows(min_row=2, values_only=False):
+            client_name = row[0].value  # Col A
+            folder_name = row[1].value  # Col B
+            status = row[8].value       # Col I
 
-    if not approved:
-        wb.close()
-        return []
-
-    # ── Sheet 2: collect new prices for approved clients ────────────
-    ws2 = wb["Cijene"]
-
-    # Build a mapping from client name → folder name for matching
-    # (Sheet 2 uses client_name in col A, we need to match to folder_name)
-    name_to_folder: dict[str, str] = {}
-    for ac in approved.values():
-        name_to_folder[ac.client_name.lower()] = ac.folder_name
-
-    for row in ws2.iter_rows(min_row=2, values_only=False):
-        client_name_cell = row[0].value  # Col A
-        service_name = row[1].value      # Col B
-        new_price = row[6].value         # Col G
-        effective_date = row[8].value    # Col I
-
-        if not client_name_cell:
-            continue
-
-        client_name_str = str(client_name_cell).strip()
-
-        # Match to approved client — try folder name first, then client name
-        folder = None
-        if client_name_str in approved:
-            folder = client_name_str
-        else:
-            folder = name_to_folder.get(client_name_str.lower())
-
-        if folder is None or folder not in approved:
-            continue
-
-        # Skip rows without a new price
-        if new_price is None:
-            continue
-
-        # Parse new price — could be a number or a formatted string
-        if isinstance(new_price, str):
-            from doc_pipeline.utils.croatian import parse_hr_number
-            price_val = parse_hr_number(new_price)
-            if price_val is None:
+            if not folder_name or not status:
                 continue
-        else:
-            try:
-                price_val = float(new_price)
-            except (TypeError, ValueError):
+            if str(status).strip() != "Odobreno":
                 continue
 
-        approved[folder].new_prices.append(
-            NewPrice(
-                service_name=str(service_name or "").strip(),
-                new_price_eur=price_val,
-                effective_date=_parse_date_cell(effective_date),
+            approved[str(folder_name).strip()] = ApprovedClient(
+                client_name=str(client_name or folder_name).strip(),
+                folder_name=str(folder_name).strip(),
             )
-        )
 
-    wb.close()
-    return list(approved.values())
+        if not approved:
+            return []
+
+        # ── Sheet 2: collect new prices for approved clients ────────────
+        ws2 = wb["Cijene"]
+
+        # C2: Validate Sheet 2 headers match expected structure
+        EXPECTED_HEADERS_S2 = {
+            1: "Klijent",
+            2: "Usluga",
+            7: "Nova cijena EUR",
+        }
+        for col, expected in EXPECTED_HEADERS_S2.items():
+            actual = ws2.cell(1, col).value
+            if actual != expected:
+                raise ValueError(
+                    f"Neočekivano zaglavlje u stupcu {col} (Sheet 2): '{actual}' "
+                    f"(očekivano: '{expected}')\n"
+                    f"Unexpected header in column {col} (Sheet 2): '{actual}' "
+                    f"(expected: '{expected}')\n"
+                    f"The spreadsheet may have been modified. Please check the column structure."
+                )
+
+        # H16: Build mapping from client name → folder name for matching.
+        # Use NFC normalization for consistent Croatian character comparison.
+        name_to_folder: dict[str, str] = {}
+        for ac in approved.values():
+            normalized_name = unicodedata.normalize('NFC', ac.client_name).lower()
+            name_to_folder[normalized_name] = ac.folder_name
+            # Also index by folder_name for direct match
+            normalized_folder = unicodedata.normalize('NFC', ac.folder_name).lower()
+            name_to_folder[normalized_folder] = ac.folder_name
+
+        for row in ws2.iter_rows(min_row=2, values_only=False):
+            client_name_cell = row[0].value  # Col A
+            service_name = row[1].value      # Col B
+            current_price = row[2].value     # Col C: current price
+            currency_cell = row[3].value     # Col D: currency
+            eur_equiv = row[4].value         # Col E: EUR equivalent (formula — may be None)
+            new_price = row[6].value         # Col G
+            effective_date = row[8].value    # Col I
+
+            if not client_name_cell:
+                continue
+
+            client_name_str = unicodedata.normalize('NFC', str(client_name_cell).strip())
+
+            # H16: Match to approved client — try folder name first, then client name
+            folder = None
+            if client_name_str in approved:
+                folder = client_name_str
+            else:
+                folder = name_to_folder.get(client_name_str.lower())
+
+            if folder is None or folder not in approved:
+                # H16: Warn about unmatched prices
+                if new_price is not None:
+                    console.print(
+                        f"  [yellow]Upozorenje: nova cijena za '{client_name_str}' "
+                        f"ne odgovara nijednom odobrenom klijentu[/yellow]"
+                    )
+                continue
+
+            # Skip rows without a new price
+            if new_price is None:
+                continue
+
+            # C7: If EUR equivalent cell is None (formula not cached by Excel),
+            # compute it in Python as a fallback.
+            if eur_equiv is None and current_price is not None and currency_cell == "HRK":
+                hrk_rate_val = Decimal("7.53450")
+                if config is not None:
+                    hrk_rate_val = Decimal(str(config.currency.hrk_to_eur_rate))
+                try:
+                    eur_equiv = float(Decimal(str(current_price)) / hrk_rate_val)
+                except (TypeError, ValueError, ArithmeticError):
+                    pass
+
+            # Parse new price — could be a number or a formatted string
+            if isinstance(new_price, str):
+                from doc_pipeline.utils.croatian import parse_hr_number
+                price_val = parse_hr_number(new_price)
+                if price_val is None:
+                    continue
+            else:
+                try:
+                    price_val = float(new_price)
+                except (TypeError, ValueError):
+                    continue
+
+            approved[folder].new_prices.append(
+                NewPrice(
+                    service_name=str(service_name or "").strip(),
+                    new_price_eur=price_val,
+                    effective_date=_parse_date_cell(effective_date),
+                )
+            )
+
+        return list(approved.values())
+    finally:
+        # M43: Ensure workbook is always closed, even on exception
+        wb.close()
 
 
 # ── HRK → EUR conversion ───────────────────────────────────────────────────
 
 
-def _hrk_to_eur(hrk_amount: float) -> float:
-    """Convert HRK to EUR using the fixed conversion rate."""
-    result = Decimal(str(hrk_amount)) / HRK_TO_EUR
+def _hrk_to_eur(hrk_amount: float | Decimal, rate: Decimal) -> float:
+    """Convert HRK to EUR using the provided conversion rate.
+
+    Args:
+        hrk_amount: Amount in HRK.
+        rate: HRK-to-EUR conversion rate (e.g. Decimal("7.53450")).
+    """
+    result = Decimal(str(hrk_amount)) / rate
     return float(result.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
@@ -363,17 +439,47 @@ def _match_prices(
     extraction_items: list[PricingItem],
     new_prices: list[NewPrice],
 ) -> list[tuple[PricingItem, NewPrice | None]]:
-    """Match extraction pricing items to new prices from spreadsheet.
+    """Match extraction pricing items to new prices from spreadsheet by service name.
 
-    Matches by position in the list (both are ordered the same way since
-    the spreadsheet was generated from the extraction).
+    Uses fuzzy string matching (thefuzz) to pair items by name, falling back to
+    positional order only as a last resort. This is robust against row
+    reordering or minor name edits in the spreadsheet.
     """
-    matched = []
-    for i, item in enumerate(extraction_items):
-        if i < len(new_prices):
-            matched.append((item, new_prices[i]))
+    from thefuzz import fuzz
+
+    matched: list[tuple[PricingItem, NewPrice | None]] = []
+    unmatched_prices = list(new_prices)
+
+    for item in extraction_items:
+        best_match: NewPrice | None = None
+        best_score = 0
+        best_idx = -1
+
+        for i, price in enumerate(unmatched_prices):
+            if item.service_name and price.service_name:
+                score = fuzz.ratio(
+                    item.service_name.lower().strip(),
+                    price.service_name.lower().strip(),
+                )
+                if score > best_score:
+                    best_score = score
+                    best_match = price
+                    best_idx = i
+
+        if best_match is not None and best_score >= 70:
+            matched.append((item, best_match))
+            unmatched_prices.pop(best_idx)
         else:
             matched.append((item, None))
+
+    # Warn about unmatched new prices
+    if unmatched_prices:
+        for p in unmatched_prices:
+            console.print(
+                f"  [yellow]Upozorenje: nova cijena za '{p.service_name}' "
+                f"nema odgovarajuću stavku[/yellow]"
+            )
+
     return matched
 
 
@@ -390,6 +496,7 @@ def build_context(
         raise ValueError(f"No extraction data for {extraction.folder_name}")
 
     is_hrk = ex.currency == Currency.HRK
+    hrk_rate = Decimal(str(config.currency.hrk_to_eur_rate))
     matched = _match_prices(ex.pricing_items, approved.new_prices)
 
     # ── Parse source documents for director, address, hours ─────────
@@ -400,7 +507,7 @@ def build_context(
     for item, new_price in matched:
         if new_price is None:
             # No new price — use old price (converted if HRK)
-            old_eur = _hrk_to_eur(item.price_value) if is_hrk else item.price_value
+            old_eur = _hrk_to_eur(item.price_value, hrk_rate) if is_hrk else item.price_value
             price_str = hr_number(old_eur) if old_eur else ""
         else:
             price_str = hr_number(new_price.new_price_eur)
@@ -421,7 +528,7 @@ def build_context(
         if new_price0 is not None:
             mjesecna_naknada = hr_number(new_price0.new_price_eur)
         elif item0.price_value:
-            val = _hrk_to_eur(item0.price_value) if is_hrk else item0.price_value
+            val = _hrk_to_eur(item0.price_value, hrk_rate) if is_hrk else item0.price_value
             mjesecna_naknada = hr_number(val)
 
     context = {
@@ -462,6 +569,7 @@ def build_context(
 def _calc_avg_change(
     extraction: ClientExtraction,
     approved: ApprovedClient,
+    hrk_rate: Decimal,
 ) -> str:
     """Calculate average percentage price change for preview."""
     ex = extraction.extraction
@@ -477,7 +585,7 @@ def _calc_avg_change(
         if old_val is None or old_val == 0:
             continue
         if is_hrk:
-            old_val = _hrk_to_eur(old_val)
+            old_val = _hrk_to_eur(old_val, hrk_rate)
         new_val = approved.new_prices[i].new_price_eur
         changes.append((new_val - old_val) / old_val * 100)
 
@@ -489,11 +597,13 @@ def _calc_avg_change(
 
 def print_preview(
     generation_plan: list[tuple[ApprovedClient, ClientExtraction, str]],
+    hrk_rate: Decimal,
 ) -> None:
     """Print a Rich preview table of what will be generated.
 
     Args:
         generation_plan: list of (approved, extraction, annex_number) tuples
+        hrk_rate: HRK-to-EUR conversion rate from config.
     """
     table = Table(title="Annex Generation Preview", show_lines=True)
     table.add_column("#", justify="right", style="dim")
@@ -506,7 +616,7 @@ def print_preview(
     for i, (approved, extraction, annex_num) in enumerate(generation_plan, 1):
         ex = extraction.extraction
         n_services = len(approved.new_prices)
-        avg_change = _calc_avg_change(extraction, approved)
+        avg_change = _calc_avg_change(extraction, approved, hrk_rate)
         is_hrk = ex and ex.currency == Currency.HRK
 
         table.add_row(
@@ -524,13 +634,33 @@ def print_preview(
     )
 
 
+# ── Annex numbering ──────────────────────────────────────────────────────
+
+
+def _detect_next_annex_number(output_dir: Path) -> int:
+    """Scan output directory for existing annex files and return next sequence number.
+
+    Looks for the pattern U-YY-NN in filenames (e.g., Aneks_U-26-05.docx)
+    and returns max(NN) + 1.
+    """
+    max_num = 0
+    pattern = re.compile(r'U-\d{2}-(\d+)', re.IGNORECASE)
+    if output_dir.exists():
+        for f in output_dir.rglob("*.docx"):
+            match = pattern.search(f.stem)
+            if match:
+                num = int(match.group(1))
+                max_num = max(max_num, num)
+    return max_num + 1
+
+
 # ── Main generation logic ──────────────────────────────────────────────────
 
 
 def run_generation(
     config: PipelineConfig,
     *,
-    start_number: int,
+    start_number: int | None = None,
     client_names: list[str] | None = None,
     dry_run: bool = False,
     force: bool = False,
@@ -539,7 +669,8 @@ def run_generation(
 
     Args:
         config: Pipeline configuration
-        start_number: Starting sequence number for annex numbering
+        start_number: Starting sequence number for annex numbering.
+            If None, auto-detects from existing files in the output directory.
         client_names: Optional filter — only generate for these clients
         dry_run: Show preview only, don't write files
         force: Overwrite existing output files
@@ -566,7 +697,7 @@ def run_generation(
 
     # ── Read approved clients from spreadsheet ──────────────────────
     console.print("[bold]Reading control spreadsheet...[/bold]")
-    approved_list = read_approved_clients(config.spreadsheet_path)
+    approved_list = read_approved_clients(config.spreadsheet_path, config=config)
 
     if not approved_list:
         console.print(
@@ -596,7 +727,13 @@ def run_generation(
     generation_plan: list[tuple[ApprovedClient, ClientExtraction, str]] = []
     skipped: list[str] = []
     year_prefix = f"U-{datetime.now().strftime('%y')}-"
-    seq = start_number
+
+    # M27: Auto-detect next annex number if not explicitly provided
+    if start_number is None:
+        seq = _detect_next_annex_number(config.annexes_output_path)
+        console.print(f"  Auto-detected next annex number: {seq}")
+    else:
+        seq = start_number
 
     # Sort alphabetically by folder name for consistent numbering
     approved_list.sort(key=lambda ac: ac.folder_name.lower())
@@ -643,8 +780,9 @@ def run_generation(
         )
 
     # ── Show preview ────────────────────────────────────────────────
+    hrk_rate = Decimal(str(config.currency.hrk_to_eur_rate))
     console.print()
-    print_preview(generation_plan)
+    print_preview(generation_plan, hrk_rate)
 
     if dry_run:
         console.print("\n[dim]Dry run — no files generated.[/dim]")
@@ -673,6 +811,19 @@ def run_generation(
 
         # Build context
         context = build_context(extraction, ac, config, annex_number, eff_date)
+
+        # M23: Validate critical context fields before rendering
+        _PLACEHOLDER_PATTERNS = ["___", "________", "N/A", ""]
+        _REQUIRED_CONTEXT_FIELDS = ["korisnik_naziv", "korisnik_oib", "broj_ugovora"]
+        ctx_warnings = []
+        for ctx_field in _REQUIRED_CONTEXT_FIELDS:
+            val = context.get(ctx_field, "")
+            if not val or any(p in str(val) for p in _PLACEHOLDER_PATTERNS):
+                ctx_warnings.append(f"  Missing/placeholder: {ctx_field} = '{val}'")
+        if ctx_warnings:
+            console.print(f"  [yellow]Upozorenje za {ac.client_name}:[/yellow]")
+            for w in ctx_warnings:
+                console.print(f"    [yellow]{w}[/yellow]")
 
         # Output path
         out_dir = config.annexes_output_path / ac.folder_name
