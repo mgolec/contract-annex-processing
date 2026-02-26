@@ -24,6 +24,15 @@ contracts/
 # Archives
 *.zip
 
+# Development docs (local only)
+CLAUDE.md
+PLAN.md
+ARCHITECTURE.md
+templates/annex-template*.md
+
+# User-specific config (use pipeline.toml.template)
+pipeline.toml
+
 # OS
 .DS_Store
 Thumbs.db
