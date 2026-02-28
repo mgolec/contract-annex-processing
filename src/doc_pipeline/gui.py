@@ -593,10 +593,49 @@ class PipelineGUI:
         )
         if width:
             btn.configure(width=width)
-        # Hover effect
-        btn.bind("<Enter>", lambda e: btn.configure(bg=c["active_bg"]))
-        btn.bind("<Leave>", lambda e: btn.configure(bg=c["bg"]))
+        # Hover effect (skip when disabled)
+        btn.bind(
+            "<Enter>",
+            lambda e, b=btn, col=c: b.configure(bg=col["active_bg"])
+            if str(b.cget("state")) != "disabled"
+            else None,
+        )
+        btn.bind(
+            "<Leave>",
+            lambda e, b=btn, col=c: b.configure(bg=col["bg"])
+            if str(b.cget("state")) != "disabled"
+            else None,
+        )
         return btn
+
+    def _restyle_button(self, btn: tk.Button, style: str) -> None:
+        """Change a button's color style and rebind hover events."""
+        colors = {
+            "primary":   {"bg": "#2980b9", "fg": "#ffffff", "active_bg": "#2471a3"},
+            "secondary": {"bg": "#bdc3c7", "fg": "#2c3e50", "active_bg": "#a6acaf"},
+            "danger":    {"bg": "#e74c3c", "fg": "#ffffff", "active_bg": "#cb4335"},
+            "success":   {"bg": "#27ae60", "fg": "#ffffff", "active_bg": "#229954"},
+        }
+        c = colors.get(style, colors["secondary"])
+        btn.configure(
+            bg=c["bg"],
+            fg=c["fg"],
+            activebackground=c["active_bg"],
+            activeforeground=c["fg"],
+            font=("Arial", 10, "bold") if style == "primary" else ("Arial", 10),
+        )
+        btn.bind(
+            "<Enter>",
+            lambda e, b=btn, col=c: b.configure(bg=col["active_bg"])
+            if str(b.cget("state")) != "disabled"
+            else None,
+        )
+        btn.bind(
+            "<Leave>",
+            lambda e, b=btn, col=c: b.configure(bg=col["bg"])
+            if str(b.cget("state")) != "disabled"
+            else None,
+        )
 
     def _add_log_area(self, parent: ttk.Frame, step_name: str = "log") -> tk.Text:
         """Add a collapsible scrollable log text area with search bar and save button."""
@@ -1607,7 +1646,7 @@ class PipelineGUI:
         self._extract_btn.configure(state=tk.NORMAL)
         self._extract_force_btn.configure(state=tk.NORMAL)
         self._extract_ss_btn.configure(state=tk.NORMAL)
-        if hasattr(self, "_extract_cancel_btn") and self._extract_cancel_btn:
+        if hasattr(self, "_extract_cancel_btn") and self._extract_cancel_btn.winfo_exists():
             self._extract_cancel_btn.configure(state=tk.DISABLED)
 
         if msg_type == "extract_cancelled":
@@ -1968,12 +2007,13 @@ class PipelineGUI:
             self._show_banner("Pregled zavr\u0161en. Provjerite zapisnik.", "info")
             # Swap: "Generiraj" becomes primary, "Pregledaj" becomes secondary
             if hasattr(self, '_gen_btn') and self._gen_btn.winfo_exists():
-                self._gen_btn.configure(bg="#2980b9", fg="#ffffff", activebackground="#2471a3", font=("Arial", 10, "bold"))
+                self._restyle_button(self._gen_btn, "primary")
             if hasattr(self, '_gen_preview_btn') and self._gen_preview_btn.winfo_exists():
-                self._gen_preview_btn.configure(bg="#bdc3c7", fg="#2c3e50", activebackground="#a6acaf", font=("Arial", 10))
+                self._restyle_button(self._gen_preview_btn, "secondary")
         else:
             self._set_status("Pregled neuspio")
             self._log_append(self._gen_log, f"\n--- GRE\u0160KA ---\n{data}\n")
+            self._show_banner(f"Pregled nije uspio: {data}", "error")
 
     def _run_generation(self) -> None:
         if self._running:
