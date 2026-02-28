@@ -299,6 +299,10 @@ class SourceDocData:
     ukupno_sati: str = ""
     l1_sati: str = ""
     l2_sati: str = ""
+    # Full verbatim L1/L2 description lines from the source document.
+    # These preserve each client's specific service scope definitions.
+    l1_full_line: str = ""
+    l2_full_line: str = ""
 
 
 def _parse_source_document(doc_path: Path) -> SourceDocData:
@@ -383,6 +387,9 @@ def _parse_source_document(doc_path: Path) -> SourceDocData:
                 m = re.search(r'(\d+)\s+klijentsk\w*\s+sat', text, re.IGNORECASE)
             if m:
                 data.l1_sati = m.group(1)
+                # Capture the full line verbatim (strip leading bullets/whitespace)
+                full = re.sub(r'^[•\-\s]+', '', text).strip()
+                data.l1_full_line = full
 
         # ── L2 hours (server/engineer hours) ──────────────────────
         # Matches all Croatian terminology variants:
@@ -397,6 +404,9 @@ def _parse_source_document(doc_path: Path) -> SourceDocData:
                 m = re.search(r'(\d+)\s+poslužiteljsk\w*\s+sat', text, re.IGNORECASE)
             if m:
                 data.l2_sati = m.group(1)
+                # Capture the full line verbatim (strip leading bullets/whitespace)
+                full = re.sub(r'^[•\-\s]+', '', text).strip()
+                data.l2_full_line = full
 
     # ── Fallback: infer missing L1/L2 from total hours ────────────
     # Some contracts only have total hours with no L1/L2 breakdown.
@@ -495,8 +505,10 @@ def _parse_best_source_data(
             best.ukupno_sati = data.ukupno_sati
         if not best.l1_sati and data.l1_sati:
             best.l1_sati = data.l1_sati
+            best.l1_full_line = data.l1_full_line
         if not best.l2_sati and data.l2_sati:
             best.l2_sati = data.l2_sati
+            best.l2_full_line = data.l2_full_line
 
         # Stop early if we have everything
         if all([
@@ -659,6 +671,30 @@ def build_context(
             val = _hrk_to_eur(item0.price_value, hrk_rate) if is_hrk else item0.price_value
             mjesecna_naknada = hr_number(val)
 
+    # Determine whether the hours/obligations article should be included.
+    # Contracts that don't have a "fond sati" / "Obveze Izvršitelja" section
+    # (e.g., Amacreo, HSST, Meeteme, BDV legal) should skip this article
+    # and renumber subsequent articles accordingly.
+    has_hours = bool(
+        src_data.ukupno_sati
+        and src_data.ukupno_sati != "___"
+        and src_data.l1_sati
+        and src_data.l1_sati != "___"
+    )
+
+    # Dynamic article numbering: Čl. 1 and Čl. 2 are always fixed.
+    # If hours article is present: 3(hours), 4(prilog), 5(ostale), 6(primjerci), 7(potpis)
+    # If hours article is absent:  3(prilog), 4(ostale), 5(primjerci), 6(potpis)
+    next_cl = 3
+    cl_sati = ""
+    if has_hours:
+        cl_sati = str(next_cl)
+        next_cl += 1
+    cl_prilog = str(next_cl); next_cl += 1
+    cl_ostale = str(next_cl); next_cl += 1
+    cl_primjerci = str(next_cl); next_cl += 1
+    cl_potpis = str(next_cl)
+
     context = {
         # Client details — pulled from source document
         "korisnik_naziv": ex.client_name or extraction.folder_name,
@@ -683,10 +719,20 @@ def build_context(
         "mjesecna_naknada": mjesecna_naknada,
         "valuta_konverzija": is_hrk,
         "stavke": stavke,
-        # Hours — pulled from source document
+        # Hours — conditional article + pulled verbatim from source document.
+        # L1/L2 full lines preserve each client's specific service scope.
+        "has_hours_article": has_hours,
         "ukupno_sati": src_data.ukupno_sati or "___",
         "l1_sati": src_data.l1_sati or "___",
         "l2_sati": src_data.l2_sati or "___",
+        "l1_full_line": src_data.l1_full_line,
+        "l2_full_line": src_data.l2_full_line,
+        # Dynamic article numbering
+        "cl_sati": cl_sati,
+        "cl_prilog": cl_prilog,
+        "cl_ostale": cl_ostale,
+        "cl_primjerci": cl_primjerci,
+        "cl_potpis": cl_potpis,
         # Static
         "vat_note": config.generation.vat_note,
         "mjesto": config.general.default_location,
@@ -699,10 +745,14 @@ def build_context(
         "korisnik_direktor": "Direktor klijenta / Client director",
         "referentni_broj": "Broj ref. dokumenta / Reference doc number",
         "datum_referentnog": "Datum ref. dokumenta / Reference doc date",
-        "ukupno_sati": "Ukupno sati / Total hours",
-        "l1_sati": "L1 sati / L1 hours",
-        "l2_sati": "L2 sati / L2 hours",
     }
+    # Only warn about hours placeholders when the hours article is included
+    if has_hours:
+        _PLACEHOLDER_FIELDS.update({
+            "ukupno_sati": "Ukupno sati / Total hours",
+            "l1_sati": "L1 sati / L1 hours",
+            "l2_sati": "L2 sati / L2 hours",
+        })
     missing = []
     for field, label in _PLACEHOLDER_FIELDS.items():
         val = context.get(field, "")
@@ -1050,9 +1100,19 @@ REQUIRED_VARIABLES = {
     "mjesecna_naknada",
     "valuta_konverzija",
     "stavke",
+    # Hours article (conditional) — l1/l2_full_line preserve client-specific scope
+    "has_hours_article",
     "ukupno_sati",
     "l1_sati",
     "l2_sati",
+    "l1_full_line",
+    "l2_full_line",
+    # Dynamic article numbering
+    "cl_sati",
+    "cl_prilog",
+    "cl_ostale",
+    "cl_primjerci",
+    "cl_potpis",
     "vat_note",
     "mjesto",
 }
