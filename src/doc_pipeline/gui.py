@@ -509,6 +509,10 @@ class PipelineGUI:
         # Reset next-step button reference
         self._next_step_btn = None
 
+        # Banner container (sits at top of content area)
+        self._banner_container = ttk.Frame(self._content_frame)
+        self._banner_container.pack(fill=tk.X, pady=(0, 4))
+
         # Build step content
         builders = [
             self._build_settings,
@@ -552,6 +556,48 @@ class PipelineGUI:
             ttk.Label(parent, text=subtitle, style="Subtitle.TLabel").pack(
                 anchor=tk.W, pady=(0, 12)
             )
+
+    def _make_button(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command: Any,
+        style: str = "secondary",
+        width: int | None = None,
+    ) -> tk.Button:
+        """Create a styled button with color hierarchy.
+
+        Styles: 'primary' (blue), 'secondary' (neutral), 'danger' (red), 'success' (green).
+        Uses tk.Button instead of ttk.Button because macOS aqua theme
+        ignores ttk background colors.
+        """
+        colors = {
+            "primary":   {"bg": "#2980b9", "fg": "#ffffff", "active_bg": "#2471a3"},
+            "secondary": {"bg": "#bdc3c7", "fg": "#2c3e50", "active_bg": "#a6acaf"},
+            "danger":    {"bg": "#e74c3c", "fg": "#ffffff", "active_bg": "#cb4335"},
+            "success":   {"bg": "#27ae60", "fg": "#ffffff", "active_bg": "#229954"},
+        }
+        c = colors.get(style, colors["secondary"])
+        btn = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=c["bg"],
+            fg=c["fg"],
+            activebackground=c["active_bg"],
+            activeforeground=c["fg"],
+            relief=tk.FLAT,
+            padx=12,
+            pady=4,
+            font=("Arial", 10, "bold") if style == "primary" else ("Arial", 10),
+            cursor="hand2",
+        )
+        if width:
+            btn.configure(width=width)
+        # Hover effect
+        btn.bind("<Enter>", lambda e: btn.configure(bg=c["active_bg"]))
+        btn.bind("<Leave>", lambda e: btn.configure(bg=c["bg"]))
+        return btn
 
     def _add_log_area(self, parent: ttk.Frame, step_name: str = "log") -> tk.Text:
         """Add a scrollable log text area with search bar and save button."""
@@ -777,17 +823,81 @@ class PipelineGUI:
             )
 
     def _add_next_step_button(self, parent: ttk.Frame, next_step: int) -> None:
-        """Add a prominent 'Continue to Next Step' button after phase completion (M34)."""
+        """Add a prominent 'Continue to Next Step' button after phase completion."""
         if next_step >= len(STEPS):
-            return  # No next step
-        btn = ttk.Button(
+            return
+        btn = self._make_button(
             parent,
-            text="Nastavi na sljede\u0107i korak / Continue to Next Step",
-            style="NextStep.TButton",
+            text="Nastavi na sljede\u0107i korak \u2192",
             command=lambda: self._show_step(next_step),
+            style="success",
         )
         btn.pack(anchor=tk.W, pady=(8, 0))
         self._next_step_btn = btn
+
+    def _show_banner(
+        self, message: str, level: str = "info", auto_dismiss: bool | None = None
+    ) -> tk.Frame:
+        """Show an inline banner at the top of the content area.
+
+        Levels: 'success', 'error', 'warning', 'info'.
+        Auto-dismiss defaults to True for success/info, False for error/warning.
+        """
+        colors = {
+            "success": {"bg": "#d4edda", "fg": "#155724", "border": "#28a745", "icon": "\u2713"},
+            "error":   {"bg": "#f8d7da", "fg": "#721c24", "border": "#dc3545", "icon": "\u2717"},
+            "warning": {"bg": "#fff3cd", "fg": "#856404", "border": "#ffc107", "icon": "\u26a0"},
+            "info":    {"bg": "#d1ecf1", "fg": "#0c5460", "border": "#17a2b8", "icon": "\u2139"},
+        }
+        c = colors.get(level, colors["info"])
+        if auto_dismiss is None:
+            auto_dismiss = level in ("success", "info")
+
+        banner = tk.Frame(
+            self._banner_container,
+            bg=c["bg"],
+            highlightbackground=c["border"],
+            highlightthickness=1,
+            padx=12,
+            pady=8,
+        )
+        banner.pack(fill=tk.X, pady=(0, 4))
+
+        # Icon + message
+        tk.Label(
+            banner,
+            text=f"{c['icon']}  {message}",
+            bg=c["bg"],
+            fg=c["fg"],
+            font=("Arial", 10),
+            anchor=tk.W,
+            wraplength=650,
+            justify=tk.LEFT,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Close button
+        close_btn = tk.Label(
+            banner,
+            text="\u2715",
+            bg=c["bg"],
+            fg=c["fg"],
+            font=("Arial", 10, "bold"),
+            cursor="hand2",
+            padx=4,
+        )
+        close_btn.pack(side=tk.RIGHT)
+        close_btn.bind("<Button-1>", lambda e: banner.destroy())
+
+        if auto_dismiss:
+            self.root.after(5000, lambda: banner.destroy() if banner.winfo_exists() else None)
+
+        return banner
+
+    def _clear_banners(self) -> None:
+        """Remove all banners from the banner container."""
+        if hasattr(self, "_banner_container") and self._banner_container.winfo_exists():
+            for child in self._banner_container.winfo_children():
+                child.destroy()
 
     def _load_config_safe(self, quiet: bool = False) -> Any:
         """Load config, return None on error.
