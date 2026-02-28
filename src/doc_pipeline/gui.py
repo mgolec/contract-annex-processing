@@ -223,6 +223,9 @@ class PipelineGUI:
         # F4: Log search state — maps log widget id to search state dict
         self._log_search_state: dict[str, dict[str, Any]] = {}
 
+        # Collapsible log state: step_index -> {"collapsed": bool, "container": Frame, "toggle_var": StringVar, "line_count": int}
+        self._log_states: dict[int, dict[str, Any]] = {}
+
         # Store settings-related widget refs for tooltips / API test (L9, F3)
         self._settings_entries: dict[str, tk.StringVar] = {}
         self._api_key_var: tk.StringVar | None = None
@@ -600,42 +603,54 @@ class PipelineGUI:
         return btn
 
     def _add_log_area(self, parent: ttk.Frame, step_name: str = "log") -> tk.Text:
-        """Add a scrollable log text area with search bar and save button."""
-        # F4: Search bar above the log
-        search_frame = ttk.Frame(parent)
-        search_frame.pack(fill=tk.X, pady=(8, 2))
+        """Add a collapsible scrollable log text area with search bar and save button."""
+        step_idx = self._current_step
 
-        ttk.Label(search_frame, text="Tra\u017ei / Search:", font=("Arial", 9)).pack(
-            side=tk.LEFT
+        # Toggle button
+        toggle_frame = ttk.Frame(parent)
+        toggle_frame.pack(fill=tk.X, pady=(8, 0))
+
+        toggle_var = tk.StringVar(value="\u25b6 Zapisnik (0 linija)")
+        toggle_btn = tk.Button(
+            toggle_frame,
+            textvariable=toggle_var,
+            font=("Arial", 9, "bold"),
+            relief=tk.FLAT,
+            bg="#ecf0f1",
+            fg="#2c3e50",
+            activebackground="#d5dbdb",
+            cursor="hand2",
+            anchor=tk.W,
+            padx=8,
+            pady=2,
         )
+        toggle_btn.pack(fill=tk.X)
+
+        # Collapsible container (holds search bar + log)
+        log_container = ttk.Frame(parent)
+        # Starts collapsed — don't pack yet
+
+        # F4: Search bar
+        search_frame = ttk.Frame(log_container)
+        search_frame.pack(fill=tk.X, pady=(4, 2))
+
+        ttk.Label(search_frame, text="Tra\u017ei:", font=("Arial", 9)).pack(side=tk.LEFT)
         search_var = tk.StringVar()
         search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
         search_entry.pack(side=tk.LEFT, padx=(4, 0))
 
-        search_btn = ttk.Button(
-            search_frame,
-            text="Tra\u017ei / Find",
-            width=10,
-        )
+        search_btn = ttk.Button(search_frame, text="Tra\u017ei", width=8)
         search_btn.pack(side=tk.LEFT, padx=(4, 0))
 
-        next_btn = ttk.Button(
-            search_frame,
-            text="Sljede\u0107i / Next",
-            width=12,
-        )
+        next_btn = ttk.Button(search_frame, text="Sljede\u0107i", width=8)
         next_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         # L6: Save log button
-        save_btn = ttk.Button(
-            search_frame,
-            text="Spremi log / Save Log",
-            width=16,
-        )
+        save_btn = ttk.Button(search_frame, text="Spremi zapisnik", width=14)
         save_btn.pack(side=tk.RIGHT, padx=(4, 0))
 
         # Log text area
-        frame = ttk.Frame(parent)
+        frame = ttk.Frame(log_container)
         frame.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
 
         scrollbar = ttk.Scrollbar(frame)
@@ -672,13 +687,38 @@ class PipelineGUI:
         search_btn.configure(command=lambda: self._log_search(log))
         next_btn.configure(command=lambda: self._log_search_next(log))
         search_entry.bind("<Return>", lambda e: self._log_search(log))
-        # Clear highlights when search text is emptied
         search_var.trace_add(
             "write", lambda *_: self._log_search_clear(log) if not search_var.get() else None
         )
 
         # L6: Wire up save button
         save_btn.configure(command=lambda: self._save_log(log, step_name))
+
+        # Store collapsible state
+        self._log_states[step_idx] = {
+            "collapsed": True,
+            "container": log_container,
+            "toggle_var": toggle_var,
+            "toggle_btn": toggle_btn,
+            "line_count": 0,
+        }
+
+        def _toggle_log() -> None:
+            state = self._log_states.get(step_idx)
+            if not state:
+                return
+            if state["collapsed"]:
+                log_container.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+                state["collapsed"] = False
+                n = state["line_count"]
+                state["toggle_var"].set(f"\u25bc Zapisnik ({n} linija)")
+            else:
+                log_container.pack_forget()
+                state["collapsed"] = True
+                n = state["line_count"]
+                state["toggle_var"].set(f"\u25b6 Zapisnik ({n} linija)")
+
+        toggle_btn.configure(command=_toggle_log)
 
         return log
 
@@ -733,8 +773,20 @@ class PipelineGUI:
         line_count = int(log_widget.index("end-1c").split(".")[0])
         if line_count > MAX_LOG_LINES:
             log_widget.delete("1.0", f"{line_count - MAX_LOG_LINES}.0")
+            line_count = MAX_LOG_LINES
         log_widget.see(tk.END)
         log_widget.configure(state=tk.DISABLED)
+
+        # Update collapsible log state
+        state = self._log_states.get(self._current_step)
+        if state:
+            state["line_count"] = line_count
+            # Auto-expand on first content
+            if state["collapsed"] and line_count > 0:
+                state["container"].pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+                state["collapsed"] = False
+            arrow = "\u25bc" if not state["collapsed"] else "\u25b6"
+            state["toggle_var"].set(f"{arrow} Zapisnik ({line_count} linija)")
 
     # ── F4: Log search methods ────────────────────────────────────────────
 
