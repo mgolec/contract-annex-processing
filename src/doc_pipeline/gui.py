@@ -212,7 +212,7 @@ class PipelineGUI:
         self._content_frame: tk.Frame | None = None
 
         # "Next step" button reference (shown after phase completion)
-        self._next_step_btn: ttk.Button | None = None
+        self._next_step_btn: tk.Widget | None = None
 
         # Mouse wheel binding id (for cleanup)
         self._mousewheel_binding_id: str | None = None
@@ -296,7 +296,7 @@ class PipelineGUI:
             1: self._run_setup,
             2: self._run_extraction,
             3: lambda: self._show_step(4),
-            4: self._run_generation,
+            4: self._run_preview,
         }
         action = actions.get(self._current_step)
         if action:
@@ -332,13 +332,73 @@ class PipelineGUI:
     # ── UI construction ──────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # Use ttk theme
+        # Use ttk theme — clam renders custom button colors on macOS;
+        # aqua ignores bg/fg, making styled buttons invisible.
         style = ttk.Style()
         available = style.theme_names()
-        for preferred in ("aqua", "clam", "vista", "default"):
+        for preferred in ("clam", "alt", "default"):
             if preferred in available:
                 style.theme_use(preferred)
                 break
+
+        # ── Button styles (color-coded hierarchy) ──
+        style.configure(
+            "Primary.TButton",
+            background="#2980b9",
+            foreground="white",
+            font=("Arial", 11, "bold"),
+            padding=(16, 8),
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", "#2471a3"), ("pressed", "#1a5276"), ("disabled", "#85929e")],
+            foreground=[("disabled", "#bdc3c7")],
+        )
+
+        style.configure(
+            "Secondary.TButton",
+            background="#ecf0f1",
+            foreground="#2c3e50",
+            font=("Arial", 10),
+            padding=(12, 6),
+        )
+        style.map(
+            "Secondary.TButton",
+            background=[("active", "#d5dbdb"), ("pressed", "#bdc3c7"), ("disabled", "#f0f0f0")],
+            foreground=[("disabled", "#bdc3c7")],
+        )
+
+        style.configure(
+            "Danger.TButton",
+            background="#e74c3c",
+            foreground="white",
+            font=("Arial", 10),
+            padding=(12, 6),
+        )
+        style.map(
+            "Danger.TButton",
+            background=[("active", "#cb4335"), ("pressed", "#a93226"), ("disabled", "#85929e")],
+            foreground=[("disabled", "#bdc3c7")],
+        )
+
+        style.configure(
+            "Success.TButton",
+            background="#27ae60",
+            foreground="white",
+            font=("Arial", 11, "bold"),
+            padding=(16, 8),
+        )
+        style.map(
+            "Success.TButton",
+            background=[("active", "#229954"), ("pressed", "#1e8449"), ("disabled", "#85929e")],
+            foreground=[("disabled", "#bdc3c7")],
+        )
+
+        style.configure(
+            "LogToggle.TButton",
+            font=("Arial", 9, "bold"),
+            padding=(8, 2),
+        )
 
         # Configure custom styles
         style.configure("Sidebar.TFrame", background="#2c3e50")
@@ -556,6 +616,14 @@ class PipelineGUI:
                 anchor=tk.W, pady=(0, 12)
             )
 
+    # Map short style names to ttk style names
+    _BUTTON_STYLES = {
+        "primary": "Primary.TButton",
+        "secondary": "Secondary.TButton",
+        "danger": "Danger.TButton",
+        "success": "Success.TButton",
+    }
+
     def _make_button(
         self,
         parent: tk.Widget,
@@ -563,79 +631,22 @@ class PipelineGUI:
         command: Any,
         style: str = "secondary",
         width: int | None = None,
-    ) -> tk.Button:
-        """Create a styled button with color hierarchy.
+    ) -> ttk.Button:
+        """Create a styled ttk button with color hierarchy.
 
         Styles: 'primary' (blue), 'secondary' (neutral), 'danger' (red), 'success' (green).
-        Uses tk.Button instead of ttk.Button because macOS aqua theme
-        ignores ttk background colors.
+        Uses ttk.Button with clam theme for cross-platform color rendering.
         """
-        colors = {
-            "primary":   {"bg": "#2980b9", "fg": "#ffffff", "active_bg": "#2471a3"},
-            "secondary": {"bg": "#bdc3c7", "fg": "#2c3e50", "active_bg": "#a6acaf"},
-            "danger":    {"bg": "#e74c3c", "fg": "#ffffff", "active_bg": "#cb4335"},
-            "success":   {"bg": "#27ae60", "fg": "#ffffff", "active_bg": "#229954"},
-        }
-        c = colors.get(style, colors["secondary"])
-        btn = tk.Button(
-            parent,
-            text=text,
-            command=command,
-            bg=c["bg"],
-            fg=c["fg"],
-            activebackground=c["active_bg"],
-            activeforeground=c["fg"],
-            relief=tk.FLAT,
-            padx=12,
-            pady=4,
-            font=("Arial", 10, "bold") if style == "primary" else ("Arial", 10),
-            cursor="hand2",
-        )
+        ttk_style = self._BUTTON_STYLES.get(style, "Secondary.TButton")
+        btn = ttk.Button(parent, text=text, command=command, style=ttk_style, cursor="hand2")
         if width:
             btn.configure(width=width)
-        # Hover effect (skip when disabled)
-        btn.bind(
-            "<Enter>",
-            lambda e, b=btn, col=c: b.configure(bg=col["active_bg"])
-            if str(b.cget("state")) != "disabled"
-            else None,
-        )
-        btn.bind(
-            "<Leave>",
-            lambda e, b=btn, col=c: b.configure(bg=col["bg"])
-            if str(b.cget("state")) != "disabled"
-            else None,
-        )
         return btn
 
-    def _restyle_button(self, btn: tk.Button, style: str) -> None:
-        """Change a button's color style and rebind hover events."""
-        colors = {
-            "primary":   {"bg": "#2980b9", "fg": "#ffffff", "active_bg": "#2471a3"},
-            "secondary": {"bg": "#bdc3c7", "fg": "#2c3e50", "active_bg": "#a6acaf"},
-            "danger":    {"bg": "#e74c3c", "fg": "#ffffff", "active_bg": "#cb4335"},
-            "success":   {"bg": "#27ae60", "fg": "#ffffff", "active_bg": "#229954"},
-        }
-        c = colors.get(style, colors["secondary"])
-        btn.configure(
-            bg=c["bg"],
-            fg=c["fg"],
-            activebackground=c["active_bg"],
-            activeforeground=c["fg"],
-            font=("Arial", 10, "bold") if style == "primary" else ("Arial", 10),
-        )
-        btn.bind(
-            "<Enter>",
-            lambda e, b=btn, col=c: b.configure(bg=col["active_bg"])
-            if str(b.cget("state")) != "disabled"
-            else None,
-        )
-        btn.bind(
-            "<Leave>",
-            lambda e, b=btn, col=c: b.configure(bg=col["bg"])
-            if str(b.cget("state")) != "disabled"
-            else None,
-        )
+    def _restyle_button(self, btn: ttk.Button, style: str) -> None:
+        """Change a button's ttk style."""
+        ttk_style = self._BUTTON_STYLES.get(style, "Secondary.TButton")
+        btn.configure(style=ttk_style)
 
     def _add_log_area(self, parent: ttk.Frame, step_name: str = "log") -> tk.Text:
         """Add a collapsible scrollable log text area with search bar and save button."""
@@ -646,18 +657,11 @@ class PipelineGUI:
         toggle_frame.pack(fill=tk.X, pady=(8, 0))
 
         toggle_var = tk.StringVar(value="\u25b6 Zapisnik (0 linija)")
-        toggle_btn = tk.Button(
+        toggle_btn = ttk.Button(
             toggle_frame,
             textvariable=toggle_var,
-            font=("Arial", 9, "bold"),
-            relief=tk.FLAT,
-            bg="#ecf0f1",
-            fg="#2c3e50",
-            activebackground="#d5dbdb",
+            style="LogToggle.TButton",
             cursor="hand2",
-            anchor=tk.W,
-            padx=8,
-            pady=2,
         )
         toggle_btn.pack(fill=tk.X)
 
@@ -1384,20 +1388,46 @@ class PipelineGUI:
             except Exception:
                 pass
 
-        # Buttons
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill=tk.X, pady=(0, 4))
+        # ── Primary action ──
+        primary_frame = ttk.Frame(parent)
+        primary_frame.pack(fill=tk.X, pady=(0, 4))
 
-        self._setup_btn = self._make_button(btn_frame, "Pokreni pripremu", self._run_setup, style="primary")
+        self._setup_btn = self._make_button(
+            primary_frame, "Pokreni pripremu", self._run_setup, style="primary"
+        )
         self._setup_btn.pack(side=tk.LEFT)
 
-        self._setup_rescan_btn = self._make_button(btn_frame, "Samo skeniraj", lambda: self._run_setup(scan_only=True), style="secondary")
-        self._setup_rescan_btn.pack(side=tk.LEFT, padx=(8, 0))
-
         # Cancel button — initially disabled
-        self._setup_cancel_btn = self._make_button(btn_frame, "Odustani", self._on_cancel_click, style="secondary")
+        self._setup_cancel_btn = self._make_button(
+            primary_frame, "Odustani", self._on_cancel_click, style="secondary"
+        )
         self._setup_cancel_btn.configure(state=tk.DISABLED)
         self._setup_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(
+            parent,
+            text="Kopira ugovore u radnu mapu i gradi inventar svih klijenata.",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        # ── Additional options (less prominent) ──
+        adv_frame = ttk.LabelFrame(parent, text="Dodatne opcije", padding=8)
+        adv_frame.pack(fill=tk.X, pady=(0, 4))
+
+        adv_row = ttk.Frame(adv_frame)
+        adv_row.pack(fill=tk.X)
+        self._setup_rescan_btn = self._make_button(
+            adv_row, "Samo skeniraj",
+            lambda: self._run_setup(scan_only=True), style="secondary"
+        )
+        self._setup_rescan_btn.pack(side=tk.LEFT)
+        ttk.Label(
+            adv_row,
+            text="Ažurira inventar bez kopiranja datoteka (brže, koristi postojeće kopije)",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         self._setup_progress, self._setup_pct = self._add_progress(parent)
         self._setup_log = self._add_log_area(parent, step_name="setup")
@@ -1541,31 +1571,60 @@ class PipelineGUI:
             "Prazno = svi klijenti",
         )
 
-        # Buttons
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill=tk.X, pady=(0, 4))
+        # ── Primary action ──
+        primary_frame = ttk.Frame(parent)
+        primary_frame.pack(fill=tk.X, pady=(0, 4))
 
         self._extract_btn = self._make_button(
-            btn_frame, "Pokreni ekstrakciju", self._run_extraction, style="primary"
+            primary_frame, "Pokreni ekstrakciju", self._run_extraction, style="primary"
         )
         self._extract_btn.pack(side=tk.LEFT)
 
-        self._extract_force_btn = self._make_button(
-            btn_frame, "Ponovi sve", lambda: self._run_extraction(force=True), style="danger"
-        )
-        self._extract_force_btn.pack(side=tk.LEFT, padx=(8, 0))
-
-        self._extract_ss_btn = self._make_button(
-            btn_frame, "Samo tablica", lambda: self._run_extraction(spreadsheet_only=True), style="secondary"
-        )
-        self._extract_ss_btn.pack(side=tk.LEFT, padx=(8, 0))
-
         # Cancel button (always visible, disabled until operation starts)
         self._extract_cancel_btn = self._make_button(
-            btn_frame, "Odustani", self._on_cancel_click, style="secondary"
+            primary_frame, "Odustani", self._on_cancel_click, style="secondary"
         )
         self._extract_cancel_btn.configure(state=tk.DISABLED)
         self._extract_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(
+            parent,
+            text="Čita ugovore i izvlači cijene pomoću AI-a. Preskače već obrađene klijente.",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        # ── Additional options (less prominent) ──
+        adv_frame = ttk.LabelFrame(parent, text="Dodatne opcije", padding=8)
+        adv_frame.pack(fill=tk.X, pady=(0, 4))
+
+        adv_row1 = ttk.Frame(adv_frame)
+        adv_row1.pack(fill=tk.X, pady=(0, 4))
+        self._extract_force_btn = self._make_button(
+            adv_row1, "Ponovi sve",
+            lambda: self._run_extraction(force=True), style="danger"
+        )
+        self._extract_force_btn.pack(side=tk.LEFT)
+        ttk.Label(
+            adv_row1,
+            text="Briše postojeće ekstrakcije i ponavlja sve ispočetka (troši API kredite)",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        adv_row2 = ttk.Frame(adv_frame)
+        adv_row2.pack(fill=tk.X)
+        self._extract_ss_btn = self._make_button(
+            adv_row2, "Samo tablica",
+            lambda: self._run_extraction(spreadsheet_only=True), style="secondary"
+        )
+        self._extract_ss_btn.pack(side=tk.LEFT)
+        ttk.Label(
+            adv_row2,
+            text="Generira kontrolnu tablicu iz postojećih ekstrakcija (bez ponovne obrade)",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         self._extract_progress, self._extract_pct = self._add_progress(parent)
         self._extract_log = self._add_log_area(parent, step_name="extraction")
@@ -1897,21 +1956,69 @@ class PipelineGUI:
             "Prazno = svi odobreni klijenti",
         )
 
-        # Buttons
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill=tk.X, pady=(0, 4))
+        # ── Two-step generation flow ──
+        flow_label = ttk.Label(
+            parent,
+            text="Generiranje se odvija u dva koraka:",
+            font=("Arial", 10),
+        )
+        flow_label.pack(anchor=tk.W, pady=(0, 4))
 
-        self._gen_preview_btn = self._make_button(btn_frame, "Pregledaj", self._run_preview, style="primary")
+        # Step A: Preview
+        step_a = ttk.Frame(parent)
+        step_a.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(
+            step_a,
+            text="1.",
+            font=("Arial", 10, "bold"),
+            foreground="#2980b9",
+            width=3,
+        ).pack(side=tk.LEFT)
+        self._gen_preview_btn = self._make_button(
+            step_a, "Pregledaj", self._run_preview, style="primary"
+        )
         self._gen_preview_btn.pack(side=tk.LEFT)
+        ttk.Label(
+            step_a,
+            text="Prikazuje što će se generirati (bez stvaranja datoteka)",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
-        self._gen_btn = self._make_button(btn_frame, "Generiraj anekse", self._run_generation, style="secondary")
-        self._gen_btn.pack(side=tk.LEFT, padx=(8, 0))
+        # Step B: Generate
+        step_b = ttk.Frame(parent)
+        step_b.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            step_b,
+            text="2.",
+            font=("Arial", 10, "bold"),
+            foreground="#2980b9",
+            width=3,
+        ).pack(side=tk.LEFT)
+        self._gen_btn = self._make_button(
+            step_b, "Generiraj anekse", self._run_generation, style="secondary"
+        )
+        self._gen_btn.pack(side=tk.LEFT)
+        ttk.Label(
+            step_b,
+            text="Stvara aneks dokumente za odobrene klijente",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
-        self._gen_open_btn = self._make_button(btn_frame, "Otvori mapu", self._open_output_folder, style="secondary")
-        self._gen_open_btn.pack(side=tk.LEFT, padx=(8, 0))
+        # Utility buttons
+        util_frame = ttk.Frame(parent)
+        util_frame.pack(fill=tk.X, pady=(4, 4))
+
+        self._gen_open_btn = self._make_button(
+            util_frame, "Otvori mapu", self._open_output_folder, style="secondary"
+        )
+        self._gen_open_btn.pack(side=tk.LEFT)
 
         # Cancel button — initially disabled
-        self._gen_cancel_btn = self._make_button(btn_frame, "Odustani", self._on_cancel_click, style="secondary")
+        self._gen_cancel_btn = self._make_button(
+            util_frame, "Odustani", self._on_cancel_click, style="secondary"
+        )
         self._gen_cancel_btn.configure(state=tk.DISABLED)
         self._gen_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
