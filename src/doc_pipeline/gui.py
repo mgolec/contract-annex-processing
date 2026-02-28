@@ -244,9 +244,8 @@ class PipelineGUI:
         """Handle window close request."""
         if self._running:
             if messagebox.askyesno(
-                "Operacija u tijeku / Operation Running",
-                "Operacija je u tijeku. Jeste li sigurni da \u017eelite zatvoriti?\n"
-                "An operation is running. Are you sure you want to close?",
+                "Operacija u tijeku",
+                "Operacija je u tijeku. Jeste li sigurni da \u017eelite zatvoriti?",
             ):
                 self._cancel_event.set()
                 self.root.destroy()
@@ -970,10 +969,9 @@ class PipelineGUI:
             self._config_load_error = str(exc)
             if not quiet:
                 messagebox.showerror(
-                    "Gre\u0161ka / Error",
+                    "Gre\u0161ka",
                     f"Konfiguracija se ne mo\u017ee u\u010ditati:\n{exc}\n\n"
-                    "Provjerite pipeline.toml i .env datoteke.\n"
-                    "Check your pipeline.toml and .env files.",
+                    "Provjerite pipeline.toml i .env datoteke.",
                 )
             return None
 
@@ -982,7 +980,7 @@ class PipelineGUI:
         if self._config_load_error:
             lbl = ttk.Label(
                 parent,
-                text="\u26a0 Konfiguracija nije u\u010ditana / Config not loaded",
+                text="\u26a0 Konfiguracija nije u\u010ditana",
                 foreground="#e67e22",
                 font=("Arial", 10),
             )
@@ -1019,7 +1017,7 @@ class PipelineGUI:
         self._add_title(
             parent,
             "Postavke",
-            "Konfiguracija pipeline-a / Pipeline settings",
+            "Konfiguracija pipeline-a",
         )
 
         # Load current values (quiet — don't pop up error during UI build)
@@ -1092,48 +1090,48 @@ class PipelineGUI:
         form_frame.columnconfigure(1, weight=1)
 
         # Section: Paths
-        ttk.Label(form_frame, text="Putanje / Paths", font=("Arial", 11, "bold")).grid(
+        ttk.Label(form_frame, text="Putanje", font=("Arial", 11, "bold")).grid(
             row=row, column=0, columnspan=2, sticky=tk.W, pady=(8, 4)
         )
         row += 1
 
         add_folder_field(
-            "Mapa s ugovorima / Contracts folder:",
+            "Mapa s ugovorima:",
             "paths.source",
             cfg.paths.source if cfg else "./contracts",
         )
 
         # Section: Company info
         ttk.Label(
-            form_frame, text="Podaci o tvrtki / Company Info", font=("Arial", 11, "bold")
+            form_frame, text="Podaci o tvrtki", font=("Arial", 11, "bold")
         ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(16, 4))
         row += 1
 
         add_field(
-            "Naziv tvrtke / Company name:",
+            "Naziv tvrtke:",
             "general.company_name",
             cfg.general.company_name if cfg else "",
         )
         add_field("OIB:", "general.company_oib", cfg.general.company_oib if cfg else "")
         add_field(
-            "Adresa / Address:",
+            "Adresa:",
             "general.company_address",
             cfg.general.company_address if cfg else "",
         )
         add_field(
-            "Direktor / Director:",
+            "Direktor:",
             "general.company_director",
             cfg.general.company_director if cfg else "",
         )
 
         # Section: API
         ttk.Label(
-            form_frame, text="API / Ekstrakcija / Extraction", font=("Arial", 11, "bold")
+            form_frame, text="API / Ekstrakcija", font=("Arial", 11, "bold")
         ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(16, 4))
         row += 1
 
         add_field(
-            "Anthropic API klju\u010d / API key:",
+            "Anthropic API klju\u010d:",
             "api_key",
             cfg.anthropic_api_key if cfg else "",
             masked=True,
@@ -1145,7 +1143,7 @@ class PipelineGUI:
         api_test_frame.grid(row=row - 1, column=2, padx=(8, 0), pady=4)
         self._api_test_btn = ttk.Button(
             api_test_frame,
-            text="Testiraj API / Test API",
+            text="Testiraj API",
             command=self._test_api_key,
         )
         self._api_test_btn.pack(side=tk.LEFT)
@@ -1156,12 +1154,12 @@ class PipelineGUI:
 
         # Section: Generation
         ttk.Label(
-            form_frame, text="Generiranje / Generation", font=("Arial", 11, "bold")
+            form_frame, text="Generiranje", font=("Arial", 11, "bold")
         ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(16, 4))
         row += 1
 
         add_field(
-            "Datum stupanja na snagu / Effective date (YYYY-MM-DD):",
+            "Datum stupanja na snagu (GGGG-MM-DD):",
             "generation.default_effective_date",
             cfg.generation.default_effective_date if cfg else "2026-03-01",
         )
@@ -1170,32 +1168,21 @@ class PipelineGUI:
         btn_frame = ttk.Frame(form_frame)
         btn_frame.grid(row=row, column=0, columnspan=2, pady=(20, 8))
 
-        ttk.Button(
+        self._make_button(
             btn_frame,
-            text="Spremi postavke / Save Settings",
-            command=lambda: self._save_settings(entries),
+            "Spremi postavke",
+            lambda: self._save_settings(entries),
+            style="primary",
         ).pack()
 
         self._settings_entries = entries
 
         # L9: Attach tooltips to key settings fields
         _tooltips = {
-            "general.company_oib": (
-                "OIB mora sadr\u017eavati to\u010dno 11 znamenki / "
-                "OIB must be exactly 11 digits"
-            ),
-            "generation.default_effective_date": (
-                "Format: GGGG-MM-DD (npr. 2026-03-01) / "
-                "Format: YYYY-MM-DD (e.g., 2026-03-01)"
-            ),
-            "api_key": (
-                "Anthropic API klju\u010d (po\u010dinje s 'sk-ant-') / "
-                "Anthropic API key (starts with 'sk-ant-')"
-            ),
-            "paths.source": (
-                "Putanja do mape s ugovorima / "
-                "Path to contracts folder"
-            ),
+            "general.company_oib": "OIB mora sadr\u017eavati to\u010dno 11 znamenki",
+            "generation.default_effective_date": "Format: GGGG-MM-DD (npr. 2026-03-01)",
+            "api_key": "Anthropic API klju\u010d (po\u010dinje s 'sk-ant-')",
+            "paths.source": "Putanja do mape s ugovorima",
         }
         for key, tip_text in _tooltips.items():
             widget = entry_widgets.get(key)
@@ -1213,18 +1200,16 @@ class PipelineGUI:
         oib = entries["general.company_oib"].get().strip()
         if oib and not re.match(r"^\d{11}$", oib):
             messagebox.showwarning(
-                "Neispravan OIB / Invalid OIB",
-                "OIB mora sadr\u017eavati to\u010dno 11 znamenki.\n"
-                "OIB must be exactly 11 digits.",
+                "Neispravan OIB",
+                "OIB mora sadr\u017eavati to\u010dno 11 znamenki.",
             )
             return
 
         eff_date = entries["generation.default_effective_date"].get().strip()
         if eff_date and not re.match(r"^\d{4}-\d{2}-\d{2}$", eff_date):
             messagebox.showwarning(
-                "Neispravan datum / Invalid Date",
-                "Datum mora biti u formatu YYYY-MM-DD.\n"
-                "Date must be in YYYY-MM-DD format.",
+                "Neispravan datum",
+                "Datum mora biti u formatu GGGG-MM-DD.",
             )
             return
 
@@ -1234,18 +1219,16 @@ class PipelineGUI:
             abs_path = _PROJECT_ROOT / source_path
             if not abs_path.is_dir():
                 messagebox.showwarning(
-                    "Mapa ne postoji / Folder Not Found",
-                    f"Mapa s ugovorima ne postoji:\n{source_path}\n\n"
-                    f"The contracts folder does not exist.",
+                    "Mapa ne postoji",
+                    f"Mapa s ugovorima ne postoji:\n{source_path}",
                 )
                 return
 
         api_key = entries["api_key"].get().strip()
         if not api_key:
             messagebox.showwarning(
-                "Nedostaje API klju\u010d / Missing API Key",
-                "Anthropic API klju\u010d ne smije biti prazan.\n"
-                "Anthropic API key must not be empty.",
+                "Nedostaje API klju\u010d",
+                "Anthropic API klju\u010d ne smije biti prazan.",
             )
             return
 
@@ -1286,18 +1269,10 @@ class PipelineGUI:
             env_path = _PROJECT_ROOT / ".env"
             env_path.write_text(f"ANTHROPIC_API_KEY={api_key}\n", encoding="utf-8")
 
-            self._set_status("Postavke spremljene / Settings saved")
-            messagebox.showinfo(
-                "Spremljeno / Saved",
-                "Postavke su spremljene.\nSettings have been saved.\n\n"
-                "Mo\u017eete nastaviti na sljede\u0107i korak.\n"
-                "You can proceed to the next step.",
-            )
+            self._set_status("Postavke spremljene")
+            self._show_banner("Postavke uspje\u0161no spremljene.", "success")
         except Exception as exc:
-            messagebox.showerror(
-                "Gre\u0161ka / Error",
-                f"Spremanje nije uspjelo:\nSave failed:\n\n{exc}",
-            )
+            self._show_banner(f"Spremanje nije uspjelo: {exc}", "error")
 
     # ── F3: API key connection test ──────────────────────────────────────
 
@@ -1308,13 +1283,13 @@ class PipelineGUI:
         key = self._api_key_var.get().strip()
         if not key:
             messagebox.showwarning(
-                "Gre\u0161ka / Error",
-                "API klju\u010d je prazan / API key is empty",
+                "Gre\u0161ka",
+                "API klju\u010d je prazan",
             )
             return
 
         self._api_test_btn.configure(state=tk.DISABLED)
-        self._api_test_status.configure(text="Testiranje... / Testing...", foreground="#3498db")
+        self._api_test_status.configure(text="Testiranje...", foreground="#3498db")
 
         # Use a dedicated queue to avoid conflicts with main pipeline queue
         api_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -1340,22 +1315,19 @@ class PipelineGUI:
                 self._api_test_btn.configure(state=tk.NORMAL)
                 if msg[0] == "api_test_ok":
                     self._api_test_status.configure(
-                        text="Uspjeh! / Valid!", foreground="#27ae60"
+                        text="Uspjeh!", foreground="#27ae60"
                     )
                 else:
                     err_msg = msg[1] if len(msg) > 1 else "Unknown error"
                     if "AuthenticationError" in str(err_msg):
                         self._api_test_status.configure(
-                            text="Nevaljan / Invalid", foreground="#e74c3c"
+                            text="Nevaljan", foreground="#e74c3c"
                         )
                     else:
                         self._api_test_status.configure(
-                            text="Gre\u0161ka / Error", foreground="#e74c3c"
+                            text="Gre\u0161ka", foreground="#e74c3c"
                         )
-                    messagebox.showwarning(
-                        "Gre\u0161ka / Error",
-                        f"Gre\u0161ka pri testiranju / Error testing API:\n{err_msg}",
-                    )
+                    self._show_banner(f"Gre\u0161ka pri testiranju API-ja: {err_msg}", "error")
                 return
             except queue.Empty:
                 pass
@@ -1370,7 +1342,7 @@ class PipelineGUI:
         self._add_title(
             parent,
             "Priprema",
-            "Skeniranje i kopiranje ugovora / Scan and copy contracts",
+            "Skeniranje i kopiranje ugovora",
         )
 
         # Show inventory status if it exists (quiet config load during UI build)
@@ -1384,10 +1356,7 @@ class PipelineGUI:
                 info = (
                     f"Postoje\u0107i inventar: {inv.total_clients} klijenata, "
                     f"{inv.clients_with_contracts} s ugovorima, "
-                    f"{inv.clients_with_annexes} s aneksima\n"
-                    f"Existing inventory: {inv.total_clients} clients, "
-                    f"{inv.clients_with_contracts} with contracts, "
-                    f"{inv.clients_with_annexes} with annexes"
+                    f"{inv.clients_with_annexes} s aneksima"
                 )
                 ttk.Label(parent, text=info, foreground="#27ae60").pack(
                     anchor=tk.W, pady=(0, 8)
@@ -1399,22 +1368,16 @@ class PipelineGUI:
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X, pady=(0, 4))
 
-        self._setup_btn = ttk.Button(
-            btn_frame,
-            text="Pokreni pripremu / Run Setup",
-            command=self._run_setup,
-        )
+        self._setup_btn = self._make_button(btn_frame, "Pokreni pripremu", self._run_setup, style="primary")
         self._setup_btn.pack(side=tk.LEFT)
 
-        self._setup_rescan_btn = ttk.Button(
-            btn_frame,
-            text="Samo skeniraj / Rescan Only",
-            command=lambda: self._run_setup(scan_only=True),
-        )
+        self._setup_rescan_btn = self._make_button(btn_frame, "Samo skeniraj", lambda: self._run_setup(scan_only=True), style="secondary")
         self._setup_rescan_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        # Cancel button (H13) — initially hidden
-        self._setup_cancel_btn = self._add_cancel_button(btn_frame)
+        # Cancel button — initially disabled
+        self._setup_cancel_btn = self._make_button(btn_frame, "Odustani", self._on_cancel_click, style="secondary")
+        self._setup_cancel_btn.configure(state=tk.DISABLED)
+        self._setup_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
         self._setup_progress = self._add_progress(parent)
         self._setup_log = self._add_log_area(parent, step_name="setup")
@@ -1430,9 +1393,9 @@ class PipelineGUI:
         self._cancel_event.clear()
         self._setup_btn.configure(state=tk.DISABLED)
         self._setup_rescan_btn.configure(state=tk.DISABLED)
-        self._show_cancel_button(self._setup_cancel_btn)
+        self._setup_cancel_btn.configure(state=tk.NORMAL)
         self._setup_progress.start(10)
-        self._set_status("Priprema u tijeku... / Setup running...")
+        self._set_status("Priprema u tijeku...")
         self._buffered.install()
 
         def task() -> None:
@@ -1460,41 +1423,44 @@ class PipelineGUI:
         self._running = False
         self._setup_btn.configure(state=tk.NORMAL)
         self._setup_rescan_btn.configure(state=tk.NORMAL)
-        self._hide_cancel_button()
+        if hasattr(self, "_setup_cancel_btn") and self._setup_cancel_btn.winfo_exists():
+            self._setup_cancel_btn.configure(state=tk.DISABLED)
 
         if msg_type == "setup_cancelled":
-            self._set_status("Priprema otkazana / Setup cancelled")
+            self._set_status("Priprema otkazana")
             self._log_append(
                 self._setup_log,
-                "\n--- OTKAZANO / CANCELLED ---\n",
+                "\n--- OTKAZANO ---\n",
             )
             return
 
         if msg_type == "setup_done":
             inv = data
             self._set_status(
-                f"Priprema zavr\u0161ena \u2014 {inv.total_clients} klijenata / "
-                f"Setup complete \u2014 {inv.total_clients} clients"
+                f"Priprema zavr\u0161ena \u2014 {inv.total_clients} klijenata"
             )
             self._log_append(
                 self._setup_log,
-                f"\n--- ZAVR\u0160ENO / COMPLETE ---\n"
-                f"Klijenti / Clients: {inv.total_clients}\n"
-                f"S ugovorima / With contracts: {inv.clients_with_contracts}\n"
-                f"S aneksima / With annexes: {inv.clients_with_annexes}\n"
-                f"Ozna\u010deni / Flagged: {len(inv.flagged_clients)}\n",
+                f"\n--- ZAVR\u0160ENO ---\n"
+                f"Klijenti: {inv.total_clients}\n"
+                f"S ugovorima: {inv.clients_with_contracts}\n"
+                f"S aneksima: {inv.clients_with_annexes}\n"
+                f"Ozna\u010deni: {len(inv.flagged_clients)}\n",
+            )
+            self._show_banner(
+                f"Priprema zavr\u0161ena \u2014 {inv.total_clients} klijenata, "
+                f"{inv.clients_with_contracts} s ugovorima, "
+                f"{inv.clients_with_annexes} s aneksima",
+                "success",
             )
             # Update sidebar availability after setup completes
             self._update_sidebar()
             # M34: Next step affordance
             self._add_next_step_button(self._content_frame, 2)
         else:
-            self._set_status("Priprema neuspjela / Setup failed")
-            self._log_append(self._setup_log, f"\n--- GRE\u0160KA / ERROR ---\n{data}\n")
-            messagebox.showerror(
-                "Gre\u0161ka / Error",
-                f"Priprema nije uspjela:\nSetup failed:\n\n{data}",
-            )
+            self._set_status("Priprema neuspjela")
+            self._log_append(self._setup_log, f"\n--- GRE\u0160KA ---\n{data}\n")
+            self._show_banner(f"Priprema nije uspjela: {data}", "error")
 
     # ── Step 2: Extraction ───────────────────────────────────────────────
 
