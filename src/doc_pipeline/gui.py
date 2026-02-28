@@ -308,7 +308,7 @@ class PipelineGUI:
 
     def _on_shortcut_escape(self, event: tk.Event) -> str:
         """Escape: Cancel running operation."""
-        if self._running and self._cancel_btn is not None:
+        if self._running:
             self._on_cancel_click()
         return "break"
 
@@ -443,7 +443,7 @@ class PipelineGUI:
         main_pane.add(self._content_outer, weight=1)
 
         # ── Status bar ──
-        self._status_var = tk.StringVar(value="Spreman / Ready")
+        self._status_var = tk.StringVar(value="Spreman")
         status_bar = ttk.Label(
             self.root,
             textvariable=self._status_var,
@@ -726,10 +726,16 @@ class PipelineGUI:
 
         return log
 
-    def _add_progress(self, parent: ttk.Frame) -> ttk.Progressbar:
-        bar = ttk.Progressbar(parent, mode="indeterminate", length=400)
-        bar.pack(fill=tk.X, pady=(8, 0))
-        return bar
+    def _add_progress(self, parent: ttk.Frame) -> tuple[ttk.Progressbar, tk.StringVar]:
+        """Add a progress bar with percentage label."""
+        prog_frame = ttk.Frame(parent)
+        prog_frame.pack(fill=tk.X, pady=(8, 0))
+        bar = ttk.Progressbar(prog_frame, mode="indeterminate", length=400)
+        bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        pct_var = tk.StringVar(value="")
+        pct_label = ttk.Label(prog_frame, textvariable=pct_var, font=("Arial", 9), width=6)
+        pct_label.pack(side=tk.LEFT, padx=(8, 0))
+        return bar, pct_var
 
     def _add_cancel_button(self, parent: ttk.Frame) -> ttk.Button:
         """Add a cancel button (initially hidden) for long operations."""
@@ -744,9 +750,11 @@ class PipelineGUI:
     def _on_cancel_click(self) -> None:
         """Handle cancel button click."""
         self._cancel_event.set()
-        if self._cancel_btn is not None:
-            self._cancel_btn.configure(state=tk.DISABLED)
-        self._set_status("Otkazivanje... / Cancelling...")
+        for attr in ("_setup_cancel_btn", "_extract_cancel_btn", "_gen_cancel_btn"):
+            btn = getattr(self, attr, None)
+            if btn and btn.winfo_exists():
+                btn.configure(state=tk.DISABLED)
+        self._set_status("Otkazivanje...")
 
     def _show_cancel_button(self, btn: ttk.Button) -> None:
         """Show the cancel button."""
@@ -759,14 +767,18 @@ class PipelineGUI:
             self._cancel_btn.pack_forget()
             self._cancel_btn = None
 
-    def _update_progress(self, bar: ttk.Progressbar, current: int, total: int) -> None:
+    def _update_progress(
+        self, bar: ttk.Progressbar, current: int, total: int, pct_var: tk.StringVar | None = None
+    ) -> None:
         """Switch progress bar to determinate mode and update value (H19)."""
         if total > 0:
             bar.stop()
             bar.configure(mode="determinate", maximum=100)
-            bar["value"] = (current / total) * 100
+            pct = (current / total) * 100
+            bar["value"] = pct
+            if pct_var:
+                pct_var.set(f"{int(pct)}%")
         else:
-            # Fallback to indeterminate
             bar.configure(mode="indeterminate")
             bar.start(10)
 
@@ -825,11 +837,10 @@ class PipelineGUI:
         if state["matches"]:
             log_widget.see(state["matches"][0])
             self._set_status(
-                f"Prona\u0111eno {len(state['matches'])} rezultata / "
-                f"Found {len(state['matches'])} matches"
+                f"Prona\u0111eno {len(state['matches'])} rezultata"
             )
         else:
-            self._set_status("Nema rezultata / No matches found")
+            self._set_status("Nema rezultata")
 
     def _log_search_next(self, log_widget: tk.Text) -> None:
         """Jump to the next search match."""
@@ -841,8 +852,7 @@ class PipelineGUI:
         pos = state["matches"][state["match_index"]]
         log_widget.see(pos)
         self._set_status(
-            f"Rezultat {state['match_index'] + 1}/{len(state['matches'])} / "
-            f"Match {state['match_index'] + 1}/{len(state['matches'])}"
+            f"Rezultat {state['match_index'] + 1}/{len(state['matches'])}"
         )
 
     def _log_search_clear(self, log_widget: tk.Text) -> None:
@@ -861,7 +871,7 @@ class PipelineGUI:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"pipeline_log_{step_name}_{timestamp}.txt"
         filepath = filedialog.asksaveasfilename(
-            title="Spremi log / Save Log",
+            title="Spremi zapisnik",
             defaultextension=".txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
             initialfile=default_name,
@@ -871,11 +881,11 @@ class PipelineGUI:
         try:
             content = log_widget.get("1.0", tk.END)
             Path(filepath).write_text(content, encoding="utf-8")
-            self._set_status(f"Log spremljen / Log saved: {Path(filepath).name}")
+            self._set_status(f"Zapisnik spremljen: {Path(filepath).name}")
         except Exception as exc:
             messagebox.showerror(
-                "Gre\u0161ka / Error",
-                f"Spremanje loga nije uspjelo / Log save failed:\n{exc}",
+                "Gre\u0161ka",
+                f"Spremanje zapisnika nije uspjelo:\n{exc}",
             )
 
     def _add_next_step_button(self, parent: ttk.Frame, next_step: int) -> None:
@@ -1379,7 +1389,7 @@ class PipelineGUI:
         self._setup_cancel_btn.configure(state=tk.DISABLED)
         self._setup_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        self._setup_progress = self._add_progress(parent)
+        self._setup_progress, self._setup_pct = self._add_progress(parent)
         self._setup_log = self._add_log_area(parent, step_name="setup")
 
     def _run_setup(self, scan_only: bool = False) -> None:
@@ -1415,10 +1425,11 @@ class PipelineGUI:
                 self._buffered.restore()
 
         threading.Thread(target=task, daemon=True).start()
-        self._poll_queue(self._setup_log, self._setup_progress, self._on_setup_done)
+        self._poll_queue(self._setup_log, self._setup_progress, self._on_setup_done, self._setup_pct)
 
     def _on_setup_done(self, msg_type: str, data: Any) -> None:
         self._setup_progress.stop()
+        self._setup_pct.set("")
         self._setup_progress.configure(mode="indeterminate")
         self._running = False
         self._setup_btn.configure(state=tk.NORMAL)
@@ -1546,7 +1557,7 @@ class PipelineGUI:
         self._extract_cancel_btn.configure(state=tk.DISABLED)
         self._extract_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        self._extract_progress = self._add_progress(parent)
+        self._extract_progress, self._extract_pct = self._add_progress(parent)
         self._extract_log = self._add_log_area(parent, step_name="extraction")
 
     def _run_extraction(
@@ -1615,10 +1626,11 @@ class PipelineGUI:
                 self._buffered.restore()
 
         threading.Thread(target=task, daemon=True).start()
-        self._poll_queue(self._extract_log, self._extract_progress, self._on_extract_done)
+        self._poll_queue(self._extract_log, self._extract_progress, self._on_extract_done, self._extract_pct)
 
     def _on_extract_done(self, msg_type: str, data: Any) -> None:
         self._extract_progress.stop()
+        self._extract_pct.set("")
         self._extract_progress.configure(mode="indeterminate")
         self._running = False
         self._extract_btn.configure(state=tk.NORMAL)
@@ -1841,7 +1853,7 @@ class PipelineGUI:
         self._add_title(
             parent,
             "Generiranje aneksa",
-            "Kreiranje novih aneks dokumenata / Create new annex documents",
+            "Kreiranje novih aneks dokumenata",
         )
 
         # Starting number input
@@ -1850,7 +1862,7 @@ class PipelineGUI:
 
         ttk.Label(
             num_frame,
-            text="Po\u010detni broj aneksa / Starting annex number:",
+            text="Po\u010detni broj aneksa:",
         ).pack(side=tk.LEFT)
         self._start_num_var = tk.StringVar(value="1")
         ttk.Entry(num_frame, textvariable=self._start_num_var, width=8).pack(
@@ -1862,7 +1874,7 @@ class PipelineGUI:
         filter_frame.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(
             filter_frame,
-            text="Klijenti (odvojeno zarezom) / Clients (comma-separated):",
+            text="Klijenti (odvojeno zarezom):",
             font=("Arial", 9),
         ).pack(side=tk.LEFT)
         self._gen_clients_var = tk.StringVar()
@@ -1872,38 +1884,28 @@ class PipelineGUI:
         gen_filter_entry.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
         ToolTip(
             gen_filter_entry,
-            "Prazno = svi odobreni klijenti / Empty = all approved clients",
+            "Prazno = svi odobreni klijenti",
         )
 
         # Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X, pady=(0, 4))
 
-        self._gen_preview_btn = ttk.Button(
-            btn_frame,
-            text="Pregledaj / Preview",
-            command=self._run_preview,
-        )
+        self._gen_preview_btn = self._make_button(btn_frame, "Pregledaj", self._run_preview, style="primary")
         self._gen_preview_btn.pack(side=tk.LEFT)
 
-        self._gen_btn = ttk.Button(
-            btn_frame,
-            text="Generiraj anekse / Generate Annexes",
-            command=self._run_generation,
-        )
+        self._gen_btn = self._make_button(btn_frame, "Generiraj anekse", self._run_generation, style="secondary")
         self._gen_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        self._gen_open_btn = ttk.Button(
-            btn_frame,
-            text="Otvori mapu / Open Folder",
-            command=self._open_output_folder,
-        )
+        self._gen_open_btn = self._make_button(btn_frame, "Otvori mapu", self._open_output_folder, style="secondary")
         self._gen_open_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        # Cancel button (H13)
-        self._gen_cancel_btn = self._add_cancel_button(btn_frame)
+        # Cancel button — initially disabled
+        self._gen_cancel_btn = self._make_button(btn_frame, "Odustani", self._on_cancel_click, style="secondary")
+        self._gen_cancel_btn.configure(state=tk.DISABLED)
+        self._gen_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        self._gen_progress = self._add_progress(parent)
+        self._gen_progress, self._gen_pct = self._add_progress(parent)
         self._gen_log = self._add_log_area(parent, step_name="generation")
 
     def _get_start_number(self) -> int | None:
@@ -1914,9 +1916,8 @@ class PipelineGUI:
             return n
         except ValueError:
             messagebox.showwarning(
-                "Neispravan broj / Invalid Number",
-                "Unesite ispravan po\u010detni broj (npr. 1, 30).\n"
-                "Enter a valid starting number (e.g. 1, 30).",
+                "Neispravan broj",
+                "Unesite ispravan po\u010detni broj (npr. 1, 30).",
             )
             return None
 
@@ -1944,9 +1945,9 @@ class PipelineGUI:
         self._cancel_event.clear()
         self._gen_preview_btn.configure(state=tk.DISABLED)
         self._gen_btn.configure(state=tk.DISABLED)
-        self._show_cancel_button(self._gen_cancel_btn)
+        self._gen_cancel_btn.configure(state=tk.NORMAL)
         self._gen_progress.start(10)
-        self._set_status("Pregledavanje... / Previewing...")
+        self._set_status("Pregledavanje...")
         self._buffered.install()
 
         def task() -> None:
@@ -1974,26 +1975,34 @@ class PipelineGUI:
                 self._buffered.restore()
 
         threading.Thread(target=task, daemon=True).start()
-        self._poll_queue(self._gen_log, self._gen_progress, self._on_preview_done)
+        self._poll_queue(self._gen_log, self._gen_progress, self._on_preview_done, self._gen_pct)
 
     def _on_preview_done(self, msg_type: str, data: Any) -> None:
         self._gen_progress.stop()
+        self._gen_pct.set("")
         self._gen_progress.configure(mode="indeterminate")
         self._running = False
         self._gen_preview_btn.configure(state=tk.NORMAL)
         self._gen_btn.configure(state=tk.NORMAL)
-        self._hide_cancel_button()
+        if hasattr(self, "_gen_cancel_btn") and self._gen_cancel_btn.winfo_exists():
+            self._gen_cancel_btn.configure(state=tk.DISABLED)
 
         if msg_type == "preview_cancelled":
-            self._set_status("Pregled otkazan / Preview cancelled")
-            self._log_append(self._gen_log, "\n--- OTKAZANO / CANCELLED ---\n")
+            self._set_status("Pregled otkazan")
+            self._log_append(self._gen_log, "\n--- OTKAZANO ---\n")
             return
 
         if msg_type == "preview_done":
-            self._set_status("Pregled zavr\u0161en / Preview complete")
+            self._set_status("Pregled zavr\u0161en")
+            self._show_banner("Pregled zavr\u0161en. Provjerite zapisnik.", "info")
+            # Swap: "Generiraj" becomes primary, "Pregledaj" becomes secondary
+            if hasattr(self, '_gen_btn') and self._gen_btn.winfo_exists():
+                self._gen_btn.configure(bg="#2980b9", fg="#ffffff", activebackground="#2471a3", font=("Arial", 10, "bold"))
+            if hasattr(self, '_gen_preview_btn') and self._gen_preview_btn.winfo_exists():
+                self._gen_preview_btn.configure(bg="#bdc3c7", fg="#2c3e50", activebackground="#a6acaf", font=("Arial", 10))
         else:
-            self._set_status("Pregled neuspio / Preview failed")
-            self._log_append(self._gen_log, f"\n--- GRE\u0160KA / ERROR ---\n{data}\n")
+            self._set_status("Pregled neuspio")
+            self._log_append(self._gen_log, f"\n--- GRE\u0160KA ---\n{data}\n")
 
     def _run_generation(self) -> None:
         if self._running:
@@ -2008,11 +2017,9 @@ class PipelineGUI:
         client_names = self._get_gen_client_names()
 
         if not messagebox.askyesno(
-            "Potvrda / Confirm",
+            "Potvrda",
             "Jeste li sigurni da \u017eelite generirati anekse?\n"
-            "Are you sure you want to generate annexes?\n\n"
-            "Provjerite najprije pregled (Preview).\n"
-            "Check the preview first.",
+            "Provjerite najprije pregled.",
         ):
             return
 
@@ -2020,9 +2027,9 @@ class PipelineGUI:
         self._cancel_event.clear()
         self._gen_preview_btn.configure(state=tk.DISABLED)
         self._gen_btn.configure(state=tk.DISABLED)
-        self._show_cancel_button(self._gen_cancel_btn)
+        self._gen_cancel_btn.configure(state=tk.NORMAL)
         self._gen_progress.start(10)
-        self._set_status("Generiranje u tijeku... / Generating...")
+        self._set_status("Generiranje u tijeku...")
         self._buffered.install()
 
         def task() -> None:
@@ -2047,45 +2054,40 @@ class PipelineGUI:
                 self._buffered.restore()
 
         threading.Thread(target=task, daemon=True).start()
-        self._poll_queue(self._gen_log, self._gen_progress, self._on_gen_done)
+        self._poll_queue(self._gen_log, self._gen_progress, self._on_gen_done, self._gen_pct)
 
     def _on_gen_done(self, msg_type: str, data: Any) -> None:
         self._gen_progress.stop()
+        self._gen_pct.set("")
         self._gen_progress.configure(mode="indeterminate")
         self._running = False
         self._gen_preview_btn.configure(state=tk.NORMAL)
         self._gen_btn.configure(state=tk.NORMAL)
-        self._hide_cancel_button()
+        if hasattr(self, "_gen_cancel_btn") and self._gen_cancel_btn.winfo_exists():
+            self._gen_cancel_btn.configure(state=tk.DISABLED)
 
         if msg_type == "gen_cancelled":
-            self._set_status("Generiranje otkazano / Generation cancelled")
-            self._log_append(self._gen_log, "\n--- OTKAZANO / CANCELLED ---\n")
+            self._set_status("Generiranje otkazano")
+            self._log_append(self._gen_log, "\n--- OTKAZANO ---\n")
             return
 
         if msg_type == "gen_done":
             n = data
-            self._set_status(
-                f"Generirano {n} aneksa / Generated {n} annexes"
-            )
+            self._set_status(f"Generirano {n} aneksa")
             self._log_append(
                 self._gen_log,
-                f"\n--- ZAVR\u0160ENO / COMPLETE ---\n"
-                f"Generirano aneksa / Annexes generated: {n}\n",
+                f"\n--- ZAVR\u0160ENO ---\n"
+                f"Generirano aneksa: {n}\n",
             )
-            messagebox.showinfo(
-                "Gotovo / Done",
-                f"Generirano {n} aneksa!\n"
-                f"Generated {n} annexes!\n\n"
-                f"Datoteke se nalaze u mapi output/annexes/\n"
-                f"Files are located in the output/annexes/ folder.",
+            self._show_banner(
+                f"Generirano {n} aneksa! Datoteke se nalaze u mapi output/annexes/",
+                "success",
+                auto_dismiss=False,
             )
         else:
-            self._set_status("Generiranje neuspjelo / Generation failed")
-            self._log_append(self._gen_log, f"\n--- GRE\u0160KA / ERROR ---\n{data}\n")
-            messagebox.showerror(
-                "Gre\u0161ka / Error",
-                f"Generiranje nije uspjelo:\nGeneration failed:\n\n{data}",
-            )
+            self._set_status("Generiranje neuspjelo")
+            self._log_append(self._gen_log, f"\n--- GRE\u0160KA ---\n{data}\n")
+            self._show_banner(f"Generiranje nije uspjelo: {data}", "error")
 
     def _open_output_folder(self) -> None:
         cfg = self._load_config_safe()
@@ -2103,6 +2105,7 @@ class PipelineGUI:
         log_widget: tk.Text,
         progress_bar: ttk.Progressbar,
         done_callback: Any,
+        pct_var: tk.StringVar | None = None,
     ) -> None:
         """Poll for background thread messages and buffered console output."""
         # Check for buffered console output
@@ -2118,7 +2121,7 @@ class PipelineGUI:
             # H19: Handle progress updates
             if msg_type == "progress" and len(msg) >= 3:
                 current, total = msg[1], msg[2]
-                self._update_progress(progress_bar, current, total)
+                self._update_progress(progress_bar, current, total, pct_var)
                 # Don't call done_callback for progress messages — keep polling
             else:
                 done_callback(msg_type, msg[1] if len(msg) > 1 else None)
@@ -2129,7 +2132,7 @@ class PipelineGUI:
         # Continue polling
         self.root.after(
             100,
-            lambda: self._poll_queue(log_widget, progress_bar, done_callback),
+            lambda: self._poll_queue(log_widget, progress_bar, done_callback, pct_var),
         )
 
     # ── Utility ──────────────────────────────────────────────────────────
@@ -2148,8 +2151,8 @@ class PipelineGUI:
         except Exception as e:
             # M35: Show error instead of silently ignoring
             messagebox.showwarning(
-                "Gre\u0161ka / Error",
-                f"Nije mogu\u0107e otvoriti datoteku.\nCannot open file.\n\n{e}",
+                "Gre\u0161ka",
+                f"Nije mogu\u0107e otvoriti datoteku.\n\n{e}",
             )
 
     def run(self) -> None:
