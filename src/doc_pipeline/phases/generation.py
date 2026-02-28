@@ -670,11 +670,15 @@ def build_context(
         "davatelj_oib": config.general.company_oib,
         "davatelj_adresa": config.general.company_address,
         "davatelj_direktor": config.general.company_director,
-        # Document metadata
+        # Document metadata — reference the latest existing document
+        # If extraction source is an annex, new annex references that annex;
+        # if it's a contract, new annex references the contract.
         "datum_aneksa": hr_date(effective_date),
         "broj_aneksa": annex_number,
-        "broj_ugovora": ex.parent_contract_number or ex.contract_number,
-        "datum_ugovora": ex.document_date or "___________",
+        "referentni_broj": ex.contract_number if ex.contract_number else "___________",
+        "referentni_naziv_gen": "Aneksa" if ex.document_type == "annex" else "Ugovora",
+        "referentni_naziv_nom": "Aneks" if ex.document_type == "annex" else "Ugovor",
+        "datum_referentnog": ex.document_date or "___________",
         # Pricing
         "mjesecna_naknada": mjesecna_naknada,
         "valuta_konverzija": is_hrk,
@@ -693,8 +697,8 @@ def build_context(
         "korisnik_oib": "OIB klijenta / Client OIB",
         "korisnik_adresa": "Adresa klijenta / Client address",
         "korisnik_direktor": "Direktor klijenta / Client director",
-        "broj_ugovora": "Broj ugovora / Contract number",
-        "datum_ugovora": "Datum ugovora / Contract date",
+        "referentni_broj": "Broj ref. dokumenta / Reference doc number",
+        "datum_referentnog": "Datum ref. dokumenta / Reference doc date",
         "ukupno_sati": "Ukupno sati / Total hours",
         "l1_sati": "L1 sati / L1 hours",
         "l2_sati": "L2 sati / L2 hours",
@@ -966,7 +970,7 @@ def run_generation(
 
         # M23: Validate critical context fields before rendering
         _PLACEHOLDER_PATTERNS = ["___", "________", "N/A"]
-        _REQUIRED_CONTEXT_FIELDS = ["korisnik_naziv", "korisnik_oib", "broj_ugovora"]
+        _REQUIRED_CONTEXT_FIELDS = ["korisnik_naziv", "korisnik_oib", "referentni_broj"]
         ctx_warnings = []
         for ctx_field in _REQUIRED_CONTEXT_FIELDS:
             val = context.get(ctx_field, "")
@@ -1021,8 +1025,10 @@ REQUIRED_VARIABLES = {
     "davatelj_direktor",
     "datum_aneksa",
     "broj_aneksa",
-    "broj_ugovora",
-    "datum_ugovora",
+    "referentni_broj",
+    "referentni_naziv_gen",
+    "referentni_naziv_nom",
+    "datum_referentnog",
     "mjesecna_naknada",
     "valuta_konverzija",
     "stavke",
