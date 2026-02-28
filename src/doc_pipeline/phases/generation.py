@@ -791,20 +791,25 @@ def print_preview(
 # ── Annex numbering ──────────────────────────────────────────────────────
 
 
-def _detect_next_annex_number(output_dir: Path) -> int:
-    """Scan output directory for existing annex files and return next sequence number.
+def _detect_next_annex_number(*scan_dirs: Path) -> int:
+    """Scan directories for existing annex files and return next sequence number.
 
-    Looks for the pattern U-YY-NN in filenames (e.g., Aneks_U-26-05.docx)
-    and returns max(NN) + 1.
+    Looks for the pattern U-YY-NN in filenames where YY matches the current year
+    (e.g., Aneks_U-26-05.docx in 2026) and returns max(NN) + 1.
+
+    Args:
+        *scan_dirs: One or more directories to scan for existing annexes.
     """
+    current_yy = datetime.now().strftime('%y')
     max_num = 0
-    pattern = re.compile(r'U-\d{2}-(\d+)', re.IGNORECASE)
-    if output_dir.exists():
-        for f in output_dir.rglob("*.docx"):
-            match = pattern.search(f.stem)
-            if match:
-                num = int(match.group(1))
-                max_num = max(max_num, num)
+    pattern = re.compile(rf'U-{current_yy}-(\d+)', re.IGNORECASE)
+    for scan_dir in scan_dirs:
+        if scan_dir.exists():
+            for f in scan_dir.rglob("*.docx"):
+                match = pattern.search(f.stem)
+                if match:
+                    num = int(match.group(1))
+                    max_num = max(max_num, num)
     return max_num + 1
 
 
@@ -818,15 +823,19 @@ def run_generation(
     client_names: list[str] | None = None,
     dry_run: bool = False,
     force: bool = False,
+    output_to_source: bool = False,
 ) -> list[Path]:
     """Phase 3: Generate annex documents from approved spreadsheet rows.
 
     Args:
         config: Pipeline configuration
         start_number: Starting sequence number for annex numbering.
-            If None, auto-detects from existing files in the output directory.
+            If None, auto-detects from existing files in the output directory
+            and source contracts directory for the current year.
         client_names: Optional filter — only generate for these clients
         dry_run: Show preview only, don't write files
+        output_to_source: If True, write annexes into the original contract
+            folder (config.source_path) instead of the output annexes folder.
         force: Overwrite existing output files
 
     Returns:
@@ -885,8 +894,9 @@ def run_generation(
     # Note: all timestamps are local time (CET/CEST for Croatia). No timezone conversion needed.
 
     # M27: Auto-detect next annex number if not explicitly provided
+    # Scan both output and source directories for current-year annexes
     if start_number is None:
-        seq = _detect_next_annex_number(config.annexes_output_path)
+        seq = _detect_next_annex_number(config.annexes_output_path, config.source_path)
         console.print(f"  Auto-detected next annex number: {seq}")
     else:
         seq = start_number
@@ -982,7 +992,10 @@ def run_generation(
                 console.print(f"    [yellow]{w}[/yellow]")
 
         # Output path
-        out_dir = config.annexes_output_path / ac.folder_name
+        if output_to_source:
+            out_dir = config.source_path / ac.folder_name
+        else:
+            out_dir = config.annexes_output_path / ac.folder_name
         out_file = out_dir / f"Aneks_{annex_number}.docx"
 
         if out_file.exists() and not force:
@@ -1001,11 +1014,16 @@ def run_generation(
         generated.append(out_file)
         logger.debug("Generated annex: %s", out_file)
 
-        console.print(f"  [green]Generated:[/green] {out_file.relative_to(config.output_path)}")
+        try:
+            rel_path = out_file.relative_to(config.output_path)
+        except ValueError:
+            rel_path = out_file.relative_to(config.source_path)
+        console.print(f"  [green]Generated:[/green] {rel_path}")
 
+    output_location = config.source_path if output_to_source else config.annexes_output_path
     console.print(
         f"\n[bold green]Done![/bold green] "
-        f"{len(generated)} annexes generated in {config.annexes_output_path}"
+        f"{len(generated)} annexes generated in {output_location}"
     )
 
     return generated

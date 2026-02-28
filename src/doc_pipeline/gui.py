@@ -1932,18 +1932,50 @@ class PipelineGUI:
             "Kreiranje novih aneks dokumenata",
         )
 
-        # Starting number input
+        # ── Output folder choice ──
+        dest_frame = ttk.LabelFrame(parent, text="Odredišna mapa", padding=6)
+        dest_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self._output_dest_var = tk.StringVar(value="separate")
+        ttk.Radiobutton(
+            dest_frame,
+            text="Zasebna mapa (output/annexes/)",
+            variable=self._output_dest_var,
+            value="separate",
+        ).pack(anchor=tk.W)
+        ttk.Radiobutton(
+            dest_frame,
+            text="Izvorna mapa (uz originalne ugovore)",
+            variable=self._output_dest_var,
+            value="source",
+        ).pack(anchor=tk.W)
+
+        # ── Starting number input ──
         num_frame = ttk.Frame(parent)
         num_frame.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Label(
             num_frame,
-            text="Po\u010detni broj aneksa:",
+            text="Početni broj aneksa:",
         ).pack(side=tk.LEFT)
-        self._start_num_var = tk.StringVar(value="1")
-        ttk.Entry(num_frame, textvariable=self._start_num_var, width=8).pack(
-            side=tk.LEFT, padx=(8, 0)
+        self._start_num_var = tk.StringVar(value="")
+        num_entry = ttk.Entry(num_frame, textvariable=self._start_num_var, width=8)
+        num_entry.pack(side=tk.LEFT, padx=(8, 0))
+
+        self._auto_num_label = ttk.Label(
+            num_frame,
+            text="",
+            font=("Arial", 9),
+            foreground="#7f8c8d",
         )
+        self._auto_num_label.pack(side=tk.LEFT, padx=(8, 0))
+        ToolTip(
+            num_entry,
+            "Prazno = automatska detekcija sljedećeg broja za tekuću godinu",
+        )
+
+        # Auto-detect and display
+        self._refresh_auto_annex_number()
 
         # F1: Client filter for generation
         filter_frame = ttk.Frame(parent)
@@ -2032,18 +2064,37 @@ class PipelineGUI:
         self._gen_progress, self._gen_pct = self._add_progress(parent)
         self._gen_log = self._add_log_area(parent, step_name="generation")
 
-    def _get_start_number(self) -> int | None:
+    def _refresh_auto_annex_number(self) -> None:
+        """Detect the next annex number for the current year and update the label."""
         try:
-            n = int(self._start_num_var.get())
+            from doc_pipeline.phases.generation import _detect_next_annex_number
+            cfg = self._load_config_safe()
+            if cfg is None:
+                return
+            yy = datetime.now().strftime('%y')
+            detected = _detect_next_annex_number(cfg.annexes_output_path, cfg.source_path)
+            self._auto_num_label.configure(
+                text=f"(automatski: U-{yy}-{detected:02d})"
+            )
+        except Exception:
+            self._auto_num_label.configure(text="")
+
+    def _get_start_number(self) -> int | None:
+        """Get the starting annex number. Empty means auto-detect (returns 'auto')."""
+        raw = self._start_num_var.get().strip()
+        if not raw:
+            return None  # auto-detect
+        try:
+            n = int(raw)
             if n < 1:
                 raise ValueError
             return n
         except ValueError:
             messagebox.showwarning(
                 "Neispravan broj",
-                "Unesite ispravan po\u010detni broj (npr. 1, 30).",
+                "Unesite ispravan početni broj (npr. 1, 30) ili ostavite prazno za automatsku detekciju.",
             )
-            return None
+            return -1  # sentinel for invalid input
 
     def _get_gen_client_names(self) -> list[str] | None:
         """Parse the client filter for the generation step (F1)."""
@@ -2060,10 +2111,11 @@ class PipelineGUI:
         if cfg is None:
             return
         start = self._get_start_number()
-        if start is None:
+        if start == -1:  # invalid input
             return
 
         client_names = self._get_gen_client_names()
+        output_to_source = self._output_dest_var.get() == "source"
 
         self._running = True
         self._cancel_event.clear()
@@ -2082,9 +2134,11 @@ class PipelineGUI:
                 from doc_pipeline.phases.generation import run_generation
 
                 kwargs: dict[str, Any] = {
-                    "start_number": start,
                     "dry_run": True,
+                    "output_to_source": output_to_source,
                 }
+                if start is not None:
+                    kwargs["start_number"] = start
                 if client_names:
                     kwargs["client_names"] = client_names
 
@@ -2136,14 +2190,15 @@ class PipelineGUI:
         if cfg is None:
             return
         start = self._get_start_number()
-        if start is None:
+        if start == -1:  # invalid input
             return
 
         client_names = self._get_gen_client_names()
+        output_to_source = self._output_dest_var.get() == "source"
 
         if not messagebox.askyesno(
             "Potvrda",
-            "Jeste li sigurni da \u017eelite generirati anekse?\n"
+            "Jeste li sigurni da želite generirati anekse?\n"
             "Provjerite najprije pregled.",
         ):
             return
@@ -2164,7 +2219,11 @@ class PipelineGUI:
                     return
                 from doc_pipeline.phases.generation import run_generation
 
-                kwargs: dict[str, Any] = {"start_number": start}
+                kwargs: dict[str, Any] = {
+                    "output_to_source": output_to_source,
+                }
+                if start is not None:
+                    kwargs["start_number"] = start
                 if client_names:
                     kwargs["client_names"] = client_names
 
@@ -2204,8 +2263,12 @@ class PipelineGUI:
                 f"\n--- ZAVR\u0160ENO ---\n"
                 f"Generirano aneksa: {n}\n",
             )
+            if self._output_dest_var.get() == "source":
+                loc = "izvornim mapama klijenata"
+            else:
+                loc = "mapi output/annexes/"
             self._show_banner(
-                f"Generirano {n} aneksa! Datoteke se nalaze u mapi output/annexes/",
+                f"Generirano {n} aneksa! Datoteke se nalaze u {loc}",
                 "success",
                 auto_dismiss=False,
             )
@@ -2218,9 +2281,12 @@ class PipelineGUI:
         cfg = self._load_config_safe()
         if cfg is None:
             return
-        folder = cfg.annexes_output_path
-        if not folder.exists():
-            folder = cfg.output_path
+        if self._output_dest_var.get() == "source":
+            folder = cfg.source_path
+        else:
+            folder = cfg.annexes_output_path
+            if not folder.exists():
+                folder = cfg.output_path
         self._open_file(folder)
 
     # ── Background task polling ──────────────────────────────────────────

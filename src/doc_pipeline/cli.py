@@ -298,13 +298,15 @@ def generate(
         if start_number is None:
             start_number_str = console.input(
                 "[bold]Enter starting annex sequence number "
-                "(e.g., 30 for U-26-30): [/bold]"
+                "(empty = auto-detect, e.g., 30 for U-26-30): [/bold]"
             )
-            try:
-                start_number = int(start_number_str.strip())
-            except ValueError:
-                console.print("[red]Invalid number.[/red]")
-                raise typer.Exit(1)
+            raw = start_number_str.strip()
+            if raw:
+                try:
+                    start_number = int(raw)
+                except ValueError:
+                    console.print("[red]Invalid number.[/red]")
+                    raise typer.Exit(1)
 
         client_names = [c.strip() for c in clients.split(",")] if clients else None
         run_generation(
