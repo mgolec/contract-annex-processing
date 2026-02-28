@@ -110,11 +110,11 @@ class _BufferedConsole:
 # ── Step definitions ─────────────────────────────────────────────────────────
 
 STEPS = [
-    ("0", "Postavke", "Settings"),
-    ("1", "Priprema", "Setup — scan contracts"),
-    ("2", "Ekstrakcija", "Extract pricing data"),
-    ("3", "Pregled", "Review spreadsheet"),
-    ("4", "Generiranje", "Generate annexes"),
+    ("1", "Postavke", "Konfiguracija"),
+    ("2", "Priprema", "Skeniranje ugovora"),
+    ("3", "Ekstrakcija", "Izvlačenje cijena"),
+    ("4", "Pregled", "Odobravanje cijena"),
+    ("5", "Generiranje", "Kreiranje aneksa"),
 ]
 
 # Step dependencies: step index -> list of prerequisite step indices
@@ -266,17 +266,12 @@ class PipelineGUI:
         self.root.bind_all("<Return>", self._on_shortcut_enter)
         # Escape: Cancel running operation
         self.root.bind_all("<Escape>", self._on_shortcut_escape)
-        # Ctrl/Cmd+1-4: Navigate to steps 1-4 (internal index 1-4)
-        for i in range(1, 5):
+        # Ctrl/Cmd+1-5: Navigate to steps (key N -> internal index N-1)
+        for i in range(1, 6):
             self.root.bind_all(
                 f"<{mod}-Key-{i}>",
-                lambda e, step=i: self._on_shortcut_step(step),
+                lambda e, step=i - 1: self._on_shortcut_step(step),
             )
-        # Also bind Ctrl/Cmd+0 to Settings (step 0) for completeness
-        self.root.bind_all(
-            f"<{mod}-Key-0>",
-            lambda e: self._on_shortcut_step(0),
-        )
         # Ctrl/Cmd+F: Focus log search (F4)
         self.root.bind_all(f"<{mod}-f>", self._on_shortcut_search)
         self.root.bind_all(f"<{mod}-F>", self._on_shortcut_search)
@@ -319,10 +314,9 @@ class PipelineGUI:
         return "break"
 
     def _on_shortcut_step(self, step: int) -> str:
-        """Ctrl/Cmd+N: Navigate directly to internal step N.
+        """Ctrl/Cmd+N: Navigate directly to step N (internal index N-1).
 
-        Ctrl+1 -> step 1 (Setup), Ctrl+4 -> step 4 (Generation).
-        Ctrl+0 -> step 0 (Settings).
+        Ctrl+1 -> step 0 (Postavke), Ctrl+5 -> step 4 (Generiranje).
         """
         if 0 <= step < len(STEPS):
             self._on_step_click(step)
@@ -407,29 +401,33 @@ class PipelineGUI:
         )
         title_lbl.pack(fill=tk.X)
 
-        # Step labels
-        for i, (num, hr_name, _en_name) in enumerate(STEPS):
-            marker = "\u25cb"  # open circle
+        # Step labels with descriptions
+        for i, (num, hr_name, description) in enumerate(STEPS):
+            step_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
+            step_frame.pack(fill=tk.X)
+
+            # Two-line label: name + description
             lbl = ttk.Label(
-                sidebar,
-                text=f"  {marker}  {hr_name}",
+                step_frame,
+                text=f"  {num}   {hr_name}\n        {description}",
                 style="SidebarStep.TLabel",
                 cursor="hand2",
             )
             lbl.pack(fill=tk.X)
             step_idx = i
             lbl.bind("<Button-1>", lambda e, s=step_idx: self._on_step_click(s))
+            step_frame.bind("<Button-1>", lambda e, s=step_idx: self._on_step_click(s))
             self._step_labels.append(lbl)
 
         # L1: Keyboard shortcut help text at bottom of sidebar
         shortcut_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
         shortcut_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 8))
         shortcut_text = (
-            f"{_MOD_DISPLAY}1-4: Navigacija / Navigate\n"
-            f"Enter: Pokreni / Run\n"
-            f"Esc: Odustani / Cancel\n"
-            f"{_MOD_DISPLAY}S: Spremi / Save\n"
-            f"{_MOD_DISPLAY}F: Tra\u017ei / Search"
+            f"{_MOD_DISPLAY}1-5: Navigacija\n"
+            f"Enter: Pokreni\n"
+            f"Esc: Odustani\n"
+            f"{_MOD_DISPLAY}S: Spremi\n"
+            f"{_MOD_DISPLAY}F: Tra\u017ei"
         )
         ttk.Label(
             shortcut_frame,
@@ -463,9 +461,8 @@ class PipelineGUI:
         # H20: Step ordering enforcement
         if not self._is_step_available(step):
             messagebox.showwarning(
-                "Korak nije dostupan / Step Not Available",
-                "Prvo dovr\u0161ite prethodni korak.\n"
-                "Please complete the previous step first.",
+                "Korak nije dostupan",
+                "Prvo dovršite prethodni korak.",
             )
             return
 
@@ -498,6 +495,7 @@ class PipelineGUI:
 
     def _show_step(self, step: int) -> None:
         self._current_step = step
+        self.root.title(f"Procudo \u2014 {STEPS[step][1]}")
         self._update_sidebar()
 
         # Unbind mouse wheel from previous view (M37 cleanup)
@@ -528,22 +526,29 @@ class PipelineGUI:
 
     def _update_sidebar(self) -> None:
         for i, lbl in enumerate(self._step_labels):
+            num = STEPS[i][0]
             hr_name = STEPS[i][1]
+            description = STEPS[i][2]
             if i < self._current_step:
-                lbl.configure(text=f"  \u2713  {hr_name}", style="SidebarStepDone.TLabel")
+                lbl.configure(
+                    text=f"  \u2713   {hr_name}\n        {description}",
+                    style="SidebarStepDone.TLabel",
+                )
             elif i == self._current_step:
-                lbl.configure(text=f"  \u25cf  {hr_name}", style="SidebarStepActive.TLabel")
+                lbl.configure(
+                    text=f"  {num}   {hr_name}\n        {description}",
+                    style="SidebarStepActive.TLabel",
+                )
             else:
-                # H20: visually indicate locked vs available steps
                 if self._is_step_available(i):
                     lbl.configure(
-                        text=f"  \u25cb  {hr_name}",
+                        text=f"  {num}   {hr_name}\n        {description}",
                         style="SidebarStep.TLabel",
                     )
                     lbl.configure(cursor="hand2")
                 else:
                     lbl.configure(
-                        text=f"  \u25cb  {hr_name}",
+                        text=f"  \U0001f512   {hr_name}\n        {description}",
                         style="SidebarStepLocked.TLabel",
                     )
                     lbl.configure(cursor="arrow")
