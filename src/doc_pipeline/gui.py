@@ -1468,7 +1468,7 @@ class PipelineGUI:
         self._add_title(
             parent,
             "Ekstrakcija",
-            "\u010citanje ugovora i ekstrakcija cijena / Parse contracts and extract pricing",
+            "Čitanje ugovora i izvlačenje cijena",
         )
 
         # Show extraction status (quiet config load during UI build)
@@ -1484,14 +1484,13 @@ class PipelineGUI:
                 client_names = [f.stem for f in json_files]
                 if len(client_names) > 10:
                     display_names = ", ".join(client_names[:10])
-                    display_names += f" ... i jo\u0161 {len(client_names) - 10} / ... and {len(client_names) - 10} more"
+                    display_names += f" ... i još {len(client_names) - 10}"
                 else:
                     display_names = ", ".join(client_names)
 
                 ttk.Label(
                     parent,
-                    text=f"Ve\u0107 ekstrahirano: {n_extracted} klijenata / "
-                    f"Already extracted: {n_extracted} clients",
+                    text=f"Već ekstrahirano: {n_extracted} klijenata",
                     foreground="#27ae60",
                 ).pack(anchor=tk.W, pady=(0, 2))
                 ttk.Label(
@@ -1508,7 +1507,7 @@ class PipelineGUI:
         filter_frame.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(
             filter_frame,
-            text="Klijenti (odvojeno zarezom) / Clients (comma-separated):",
+            text="Klijenti (odvojeno zarezom):",
             font=("Arial", 9),
         ).pack(side=tk.LEFT)
         self._extract_clients_var = tk.StringVar()
@@ -1518,36 +1517,34 @@ class PipelineGUI:
         extract_filter_entry.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
         ToolTip(
             extract_filter_entry,
-            "Prazno = svi klijenti / Empty = all clients",
+            "Prazno = svi klijenti",
         )
 
         # Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X, pady=(0, 4))
 
-        self._extract_btn = ttk.Button(
-            btn_frame,
-            text="Pokreni ekstrakciju / Run Extraction",
-            command=self._run_extraction,
+        self._extract_btn = self._make_button(
+            btn_frame, "Pokreni ekstrakciju", self._run_extraction, style="primary"
         )
         self._extract_btn.pack(side=tk.LEFT)
 
-        self._extract_force_btn = ttk.Button(
-            btn_frame,
-            text="Ponovi sve / Re-extract All",
-            command=lambda: self._run_extraction(force=True),
+        self._extract_force_btn = self._make_button(
+            btn_frame, "Ponovi sve", lambda: self._run_extraction(force=True), style="danger"
         )
         self._extract_force_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        self._extract_ss_btn = ttk.Button(
-            btn_frame,
-            text="Samo tablica / Spreadsheet Only",
-            command=lambda: self._run_extraction(spreadsheet_only=True),
+        self._extract_ss_btn = self._make_button(
+            btn_frame, "Samo tablica", lambda: self._run_extraction(spreadsheet_only=True), style="secondary"
         )
         self._extract_ss_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        # Cancel button (H13)
-        self._extract_cancel_btn = self._add_cancel_button(btn_frame)
+        # Cancel button (always visible, disabled until operation starts)
+        self._extract_cancel_btn = self._make_button(
+            btn_frame, "Odustani", self._on_cancel_click, style="secondary"
+        )
+        self._extract_cancel_btn.configure(state=tk.DISABLED)
+        self._extract_cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
         self._extract_progress = self._add_progress(parent)
         self._extract_log = self._add_log_area(parent, step_name="extraction")
@@ -1563,9 +1560,8 @@ class PipelineGUI:
 
         if not cfg.inventory_path.exists():
             messagebox.showwarning(
-                "Nedostaje inventar / Inventory Missing",
-                "Inventar nije prona\u0111en. Pokrenite najprije korak 'Priprema'.\n\n"
-                "Inventory not found. Run the 'Setup' step first.",
+                "Nedostaje inventar",
+                "Inventar nije pronađen. Pokrenite najprije korak 'Priprema'.",
             )
             return
 
@@ -1579,10 +1575,8 @@ class PipelineGUI:
         # M32: Re-extract confirmation for force mode
         if force:
             if not messagebox.askyesno(
-                "Potvrda / Confirm",
-                "Ovo \u0107e ponovo ekstrahirati sve klijente i koristiti API kredite (~$6-13).\n"
-                "This will re-extract all clients and use API credits (~$6-13).\n\n"
-                "Nastaviti? / Continue?",
+                "Potvrda",
+                "Ovo će ponovo ekstrahirati sve klijente i koristiti API kredite (~$6-13).\n\nNastaviti?",
             ):
                 return
 
@@ -1591,9 +1585,9 @@ class PipelineGUI:
         self._extract_btn.configure(state=tk.DISABLED)
         self._extract_force_btn.configure(state=tk.DISABLED)
         self._extract_ss_btn.configure(state=tk.DISABLED)
-        self._show_cancel_button(self._extract_cancel_btn)
+        self._extract_cancel_btn.configure(state=tk.NORMAL)
         self._extract_progress.start(10)
-        self._set_status("Ekstrakcija u tijeku... / Extraction running...")
+        self._set_status("Ekstrakcija u tijeku...")
         self._buffered.install()
 
         def task() -> None:
@@ -1630,127 +1624,102 @@ class PipelineGUI:
         self._extract_btn.configure(state=tk.NORMAL)
         self._extract_force_btn.configure(state=tk.NORMAL)
         self._extract_ss_btn.configure(state=tk.NORMAL)
-        self._hide_cancel_button()
+        if hasattr(self, "_extract_cancel_btn") and self._extract_cancel_btn:
+            self._extract_cancel_btn.configure(state=tk.DISABLED)
 
         if msg_type == "extract_cancelled":
-            self._set_status("Ekstrakcija otkazana / Extraction cancelled")
+            self._set_status("Ekstrakcija otkazana")
             self._log_append(
                 self._extract_log,
-                "\n--- OTKAZANO / CANCELLED ---\n",
+                "\n--- OTKAZANO ---\n",
             )
             return
 
         if msg_type == "extract_done":
             n = data
-            self._set_status(
-                f"Ekstrakcija zavr\u0161ena \u2014 {n} klijenata / "
-                f"Extraction complete \u2014 {n} clients"
-            )
+            self._set_status(f"Ekstrakcija završena — {n} klijenata")
             self._log_append(
                 self._extract_log,
-                f"\n--- ZAVR\u0160ENO / COMPLETE ---\n"
-                f"Ekstrahirano klijenata / Clients extracted: {n}\n"
-                f"Tablica spremna / Spreadsheet ready: output/control_spreadsheet.xlsx\n",
+                f"\n--- ZAVRŠENO ---\n"
+                f"Ekstrahirano klijenata: {n}\n"
+                f"Tablica spremna: output/control_spreadsheet.xlsx\n",
             )
             # Update sidebar availability
             self._update_sidebar()
-            # Offer to open spreadsheet
-            cfg = self._load_config_safe(quiet=True)
-            if cfg and cfg.spreadsheet_path.exists():
-                if messagebox.askyesno(
-                    "Tablica spremna / Spreadsheet Ready",
-                    "Kontrolna tablica je kreirana.\nThe control spreadsheet has been created.\n\n"
-                    "\u017delite li je otvoriti u Excelu?\n"
-                    "Would you like to open it in Excel?",
-                ):
-                    self._open_file(cfg.spreadsheet_path)
+            self._show_banner(
+                f"Ekstrakcija završena — {n} klijenata. Otvorite tablicu u koraku Pregled.",
+                "success",
+            )
             # M34: Next step affordance
             self._add_next_step_button(self._content_frame, 3)
         else:
-            self._set_status("Ekstrakcija neuspjela / Extraction failed")
-            self._log_append(self._extract_log, f"\n--- GRE\u0160KA / ERROR ---\n{data}\n")
-            messagebox.showerror(
-                "Gre\u0161ka / Error",
-                f"Ekstrakcija nije uspjela:\nExtraction failed:\n\n{data}",
-            )
+            self._set_status("Ekstrakcija neuspjela")
+            self._log_append(self._extract_log, f"\n--- GREŠKA ---\n{data}\n")
+            self._show_banner(f"Ekstrakcija nije uspjela: {data}", "error")
 
     # ── Step 3: Review ───────────────────────────────────────────────────
 
     def _build_review(self, parent: ttk.Frame) -> None:
-        self._add_title(
-            parent,
-            "Pregled tablice",
-            "Ru\u010dni pregled i odobravanje / Manual review and approval",
-        )
+        self._add_title(parent, "Pregled tablice", "Ručni pregled i odobravanje")
 
+        # Concise instruction steps
         instructions = ttk.Frame(parent)
         instructions.pack(fill=tk.X, pady=(0, 8))
 
-        steps_text = (
-            "Koraci / Steps:\n\n"
-            "1. Otvorite kontrolnu tablicu (output/control_spreadsheet.xlsx)\n"
-            "   Open the control spreadsheet\n\n"
-            "2. Na listu 'Pregled klijenata' (Sheet 1):\n"
-            "   Ozna\u010dite stupac Status (I) kao 'Odobreno' za klijente kojima\n"
-            "   \u017eelite generirati aneks\n"
-            "   Mark the Status column (I) as 'Odobreno' for clients\n"
-            "   you want to generate an annex for\n\n"
-            "3. Na listu 'Cijene' (Sheet 2):\n"
-            "   Unesite nove cijene u stupac 'Nova cijena EUR' (G)\n"
-            "   Enter new prices in the 'Nova cijena EUR' column (G)\n\n"
-            "4. Spremite i zatvorite tablicu\n"
-            "   Save and close the spreadsheet\n\n"
-            "5. Kliknite 'Gotovo, nastavi' za nastavak\n"
-            "   Click 'Done, continue' to proceed"
-        )
-
-        text = tk.Text(
-            instructions,
-            wrap=tk.WORD,
-            font=("Arial", 11),
-            bg="#fdf6e3",
-            fg="#586e75",
-            height=12,
-            relief=tk.FLAT,
-            padx=16,
-            pady=12,
-        )
-        text.insert("1.0", steps_text)
-        text.configure(state=tk.DISABLED)
-        text.pack(fill=tk.BOTH, expand=True)
+        steps = [
+            ("1.", "Otvorite kontrolnu tablicu klikom na gumb ispod"),
+            ("2.", "Na listu 'Pregled klijenata' — stupac Status (I) označite kao 'Odobreno'"),
+            ("3.", "Na listu 'Cijene' — unesite nove cijene u stupac 'Nova cijena EUR' (G)"),
+            ("4.", "Spremite i zatvorite tablicu"),
+            ("5.", "Kliknite 'Nastavi na generiranje'"),
+        ]
+        for num, text in steps:
+            step_row = ttk.Frame(instructions)
+            step_row.pack(fill=tk.X, pady=2)
+            ttk.Label(
+                step_row,
+                text=num,
+                font=("Arial", 10, "bold"),
+                foreground="#2980b9",
+                width=3,
+            ).pack(side=tk.LEFT)
+            ttk.Label(
+                step_row,
+                text=text,
+                font=("Arial", 10),
+                wraplength=600,
+                justify=tk.LEFT,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X, pady=(4, 0))
 
-        ttk.Button(
+        self._make_button(
             btn_frame,
-            text="Otvori tablicu / Open Spreadsheet",
+            text="Otvori tablicu",
             command=self._open_spreadsheet,
+            style="primary",
         ).pack(side=tk.LEFT)
 
-        ttk.Button(
+        self._make_button(
             btn_frame,
-            text="Gotovo, nastavi / Done, Continue",
+            text="Nastavi na generiranje \u2192",
             command=lambda: self._show_step(4),
+            style="success",
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         # F2: Per-client extraction preview
         preview_frame = ttk.LabelFrame(
             parent,
-            text="Pregled ekstrakcija po klijentu / Per-client extraction preview",
+            text="Pregled ekstrakcija po klijentu",
             padding=8,
         )
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
 
-        # Client selector
         selector_frame = ttk.Frame(preview_frame)
         selector_frame.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(
-            selector_frame,
-            text="Klijent / Client:",
-            font=("Arial", 10),
-        ).pack(side=tk.LEFT)
+        ttk.Label(selector_frame, text="Klijent:", font=("Arial", 10)).pack(side=tk.LEFT)
 
         cfg = self._load_config_safe(quiet=True)
         client_list: list[str] = []
@@ -1768,7 +1737,6 @@ class PipelineGUI:
         client_combo.pack(side=tk.LEFT, padx=(8, 0))
         client_combo.bind("<<ComboboxSelected>>", lambda e: self._show_client_preview())
 
-        # Preview text area
         self._review_preview_text = tk.Text(
             preview_frame,
             wrap=tk.WORD,
@@ -1789,10 +1757,8 @@ class PipelineGUI:
             return
         if not cfg.spreadsheet_path.exists():
             messagebox.showwarning(
-                "Tablica nije prona\u0111ena / Spreadsheet Not Found",
-                "Kontrolna tablica ne postoji.\n"
-                "Pokrenite najprije korak 'Ekstrakcija'.\n\n"
-                "Spreadsheet not found. Run 'Extraction' first.",
+                "Tablica nije pronađena",
+                "Kontrolna tablica ne postoji.\nPokrenite najprije korak 'Ekstrakcija'.",
             )
             return
         self._open_file(cfg.spreadsheet_path)
@@ -1811,7 +1777,7 @@ class PipelineGUI:
 
         json_path = cfg.extractions_path / f"{client_name}.json"
         if not json_path.exists():
-            self._set_review_preview(f"Datoteka nije prona\u0111ena / File not found:\n{json_path}")
+            self._set_review_preview(f"Datoteka nije pronađena:\n{json_path}")
             return
 
         try:
@@ -1821,22 +1787,22 @@ class PipelineGUI:
             ex = data.get("extraction") or {}
 
             lines: list[str] = []
-            lines.append(f"Klijent / Client: {ex.get('client_name') or client_name}")
+            lines.append(f"Klijent: {ex.get('client_name') or client_name}")
             lines.append(f"OIB: {ex.get('client_oib') or 'N/A'}")
             lines.append(
-                f"Broj ugovora / Contract #: "
+                f"Broj ugovora: "
                 f"{ex.get('contract_number') or ex.get('parent_contract_number') or 'N/A'}"
             )
-            lines.append(f"Datum / Date: {ex.get('document_date') or 'N/A'}")
+            lines.append(f"Datum: {ex.get('document_date') or 'N/A'}")
             lines.append(
-                f"Pouzdanost / Confidence: {ex.get('confidence') or 'N/A'}"
+                f"Pouzdanost: {ex.get('confidence') or 'N/A'}"
             )
-            lines.append(f"Valuta / Currency: {ex.get('currency') or 'N/A'}")
-            lines.append(f"Izvorni dokument / Source: {data.get('source_file') or 'N/A'}")
+            lines.append(f"Valuta: {ex.get('currency') or 'N/A'}")
+            lines.append(f"Izvorni dokument: {data.get('source_file') or 'N/A'}")
 
             # Show pricing items
             items = ex.get("pricing_items", [])
-            lines.append(f"\nStavke ({len(items)}) / Pricing items ({len(items)}):")
+            lines.append(f"\nStavke ({len(items)}):")
             lines.append("-" * 50)
             for item in items:
                 name = item.get("service_name", "?")
@@ -1849,17 +1815,17 @@ class PipelineGUI:
             notes = ex.get("notes", [])
             if notes:
                 notes_str = "; ".join(notes) if isinstance(notes, list) else str(notes)
-                lines.append(f"\nNapomene / Notes: {notes_str}")
+                lines.append(f"\nNapomene: {notes_str}")
 
             # Show error if extraction failed
             error = data.get("error")
             if error:
-                lines.append(f"\n[GREŠKA / ERROR]: {error}")
+                lines.append(f"\n[GREŠKA]: {error}")
 
             self._set_review_preview("\n".join(lines))
         except Exception as exc:
             self._set_review_preview(
-                f"Gre\u0161ka pri \u010ditanju / Error reading extraction:\n{exc}"
+                f"Greška pri čitanju:\n{exc}"
             )
 
     def _set_review_preview(self, text: str) -> None:
