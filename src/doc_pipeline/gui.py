@@ -433,13 +433,25 @@ class PipelineGUI:
         style.configure("Status.TLabel", font=("Arial", 10), padding=(8, 4))
         style.configure("Title.TLabel", font=("Arial", 14, "bold"))
         style.configure("Subtitle.TLabel", font=("Arial", 10), foreground="#7f8c8d")
-        # Top-level layout
-        main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main_pane.pack(fill=tk.BOTH, expand=True)
+        # Top-level layout — fixed sidebar + expanding content.
+        # PanedWindow was unreliable for sidebar width on macOS;
+        # pack with pack_propagate(False) guarantees a fixed sidebar.
 
-        # ── Sidebar ──
-        sidebar = ttk.Frame(main_pane, style="Sidebar.TFrame", width=180)
-        main_pane.add(sidebar, weight=0)
+        # Status bar (pack at BOTTOM first for correct geometry order)
+        self._status_var = tk.StringVar(value="Spreman")
+        status_bar = ttk.Label(
+            self.root,
+            textvariable=self._status_var,
+            style="Status.TLabel",
+            relief=tk.SUNKEN,
+            anchor=tk.W,
+        )
+        status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # ── Sidebar (fixed width, does not resize) ──
+        sidebar = ttk.Frame(self.root, style="Sidebar.TFrame", width=220)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)  # Maintain fixed 220px width
 
         # App title in sidebar
         title_lbl = ttk.Label(
@@ -490,20 +502,9 @@ class PipelineGUI:
             justify=tk.LEFT,
         ).pack(anchor=tk.W)
 
-        # ── Content area ──
-        self._content_outer = ttk.Frame(main_pane)
-        main_pane.add(self._content_outer, weight=1)
-
-        # ── Status bar ──
-        self._status_var = tk.StringVar(value="Spreman")
-        status_bar = ttk.Label(
-            self.root,
-            textvariable=self._status_var,
-            style="Status.TLabel",
-            relief=tk.SUNKEN,
-            anchor=tk.W,
-        )
-        status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        # ── Content area (fills all remaining space) ──
+        self._content_outer = ttk.Frame(self.root)
+        self._content_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     def _on_step_click(self, step: int) -> None:
         if self._running:
@@ -1056,8 +1057,14 @@ class PipelineGUI:
         form_frame.bind(
             "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        canvas.create_window((0, 0), window=form_frame, anchor=tk.NW)
+        canvas_window = canvas.create_window((0, 0), window=form_frame, anchor=tk.NW)
         canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Stretch form to fill canvas width (responsive layout)
+        canvas.bind(
+            "<Configure>",
+            lambda e, cw=canvas_window: canvas.itemconfigure(cw, width=e.width),
+        )
 
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
