@@ -180,7 +180,7 @@ class PipelineGUI:
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("Procudo — Pipeline za ugovore / Contract Pipeline")
+        self.root.title("Procudo — Pipeline za ugovore")
         self.root.geometry("960x680")
         self.root.minsize(800, 560)
 
@@ -210,9 +210,6 @@ class PipelineGUI:
         self._current_step = 0
         self._step_labels: list[tk.Label] = []
         self._content_frame: tk.Frame | None = None
-
-        # Cancel button reference (shown/hidden dynamically)
-        self._cancel_btn: ttk.Button | None = None
 
         # "Next step" button reference (shown after phase completion)
         self._next_step_btn: ttk.Button | None = None
@@ -376,11 +373,6 @@ class PipelineGUI:
         style.configure("Status.TLabel", font=("Arial", 10), padding=(8, 4))
         style.configure("Title.TLabel", font=("Arial", 14, "bold"))
         style.configure("Subtitle.TLabel", font=("Arial", 10), foreground="#7f8c8d")
-        style.configure(
-            "NextStep.TButton",
-            font=("Arial", 10, "bold"),
-        )
-
         # Top-level layout
         main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         main_pane.pack(fill=tk.BOTH, expand=True)
@@ -737,16 +729,6 @@ class PipelineGUI:
         pct_label.pack(side=tk.LEFT, padx=(8, 0))
         return bar, pct_var
 
-    def _add_cancel_button(self, parent: ttk.Frame) -> ttk.Button:
-        """Add a cancel button (initially hidden) for long operations."""
-        btn = ttk.Button(
-            parent,
-            text="Odustani / Cancel",
-            command=self._on_cancel_click,
-        )
-        # Don't pack yet — shown when operation starts
-        return btn
-
     def _on_cancel_click(self) -> None:
         """Handle cancel button click."""
         self._cancel_event.set()
@@ -755,17 +737,6 @@ class PipelineGUI:
             if btn and btn.winfo_exists():
                 btn.configure(state=tk.DISABLED)
         self._set_status("Otkazivanje...")
-
-    def _show_cancel_button(self, btn: ttk.Button) -> None:
-        """Show the cancel button."""
-        self._cancel_btn = btn
-        btn.pack(side=tk.LEFT, padx=(8, 0))
-
-    def _hide_cancel_button(self) -> None:
-        """Hide the cancel button."""
-        if self._cancel_btn is not None:
-            self._cancel_btn.pack_forget()
-            self._cancel_btn = None
 
     def _update_progress(
         self, bar: ttk.Progressbar, current: int, total: int, pct_var: tk.StringVar | None = None
@@ -1200,7 +1171,7 @@ class PipelineGUI:
                 ToolTip(widget, tip_text)
 
     def _pick_folder(self, var: tk.StringVar) -> None:
-        path = filedialog.askdirectory(title="Odaberite mapu / Select folder")
+        path = filedialog.askdirectory(title="Odaberite mapu")
         if path:
             var.set(path)
 
@@ -1328,7 +1299,7 @@ class PipelineGUI:
                         text="Uspjeh!", foreground="#27ae60"
                     )
                 else:
-                    err_msg = msg[1] if len(msg) > 1 else "Unknown error"
+                    err_msg = msg[1] if len(msg) > 1 else "Nepoznata greška"
                     if "AuthenticationError" in str(err_msg):
                         self._api_test_status.configure(
                             text="Nevaljan", foreground="#e74c3c"
