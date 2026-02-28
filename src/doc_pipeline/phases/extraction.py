@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 
 import anthropic
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -31,6 +30,7 @@ from doc_pipeline.models import (
     PricingItem,
 )
 from doc_pipeline.state import load_or_create_state
+from doc_pipeline.utils import progress as _progress
 from doc_pipeline.utils.croatian import nfc, parse_hr_number
 from doc_pipeline.utils.parsers import (
     convert_doc_to_docx,
@@ -39,7 +39,6 @@ from doc_pipeline.utils.parsers import (
     find_libreoffice,
 )
 
-console = Console()
 logger = logging.getLogger(__name__)
 
 
@@ -242,11 +241,11 @@ def _extract_sync(
 
     # M24: Warn if document text exceeds the safety limit
     if len(document_text) > 100_000:
-        console.print(
+        _progress.console.print(
             f"  [yellow]Upozorenje: tekst za {folder_name} skraćen sa "
             f"{len(document_text):,} na 100.000 znakova[/yellow]"
         )
-        console.print(
+        _progress.console.print(
             f"  [yellow]Warning: {folder_name} text truncated from "
             f"{len(document_text):,} to 100,000 chars[/yellow]"
         )
@@ -279,7 +278,7 @@ def _extract_sync(
             if attempt == MAX_RETRIES:
                 raise  # Give up after max retries
             delay = RETRY_DELAY * (2 ** attempt)
-            console.print(
+            _progress.console.print(
                 f"  [yellow]API error (attempt {attempt + 1}/{MAX_RETRIES}): "
                 f"{e}. Retrying in {delay}s...[/yellow]"
             )
@@ -321,11 +320,11 @@ def _extract_batch(
     for custom_id, folder_name, document_text in requests:
         # M24: Warn if document text exceeds the safety limit
         if len(document_text) > 100_000:
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Upozorenje: tekst za {folder_name} skraćen sa "
                 f"{len(document_text):,} na 100.000 znakova[/yellow]"
             )
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Warning: {folder_name} text truncated from "
                 f"{len(document_text):,} to 100,000 chars[/yellow]"
             )
@@ -352,7 +351,7 @@ def _extract_batch(
         })
 
     # Submit batch — C3: retry with exponential backoff for transient API errors
-    console.print(f"\n  Submitting batch of {len(batch_requests)} requests...")
+    _progress.console.print(f"\n  Submitting batch of {len(batch_requests)} requests...")
     for attempt in range(MAX_RETRIES + 1):
         try:
             batch = client.messages.batches.create(requests=batch_requests)
@@ -361,13 +360,13 @@ def _extract_batch(
             if attempt == MAX_RETRIES:
                 raise
             delay = RETRY_DELAY * (2 ** attempt)
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Batch submit error (attempt {attempt + 1}/{MAX_RETRIES}): "
                 f"{e}. Retrying in {delay}s...[/yellow]"
             )
             time.sleep(delay)
     batch_id = batch.id
-    console.print(f"  Batch ID: {batch_id}")
+    _progress.console.print(f"  Batch ID: {batch_id}")
 
     # Poll until complete (max 30 minutes)
     max_wait = 30 * 60
@@ -504,12 +503,12 @@ def run_extraction(
         skip_conversion: Skip .doc → .docx conversion.
         spreadsheet_only: Only regenerate spreadsheet from existing extractions.
     """
-    console.print("\n[bold]Phase 1: Extraction[/bold]")
+    _progress.console.print("\n[bold]Phase 1: Extraction[/bold]")
 
     # Load inventory
     inv_path = config.inventory_path
     if not inv_path.exists():
-        console.print("[red]Error: No inventory found. Run 'pipeline setup' first.[/red]")
+        _progress.console.print("[red]Error: No inventory found. Run 'pipeline setup' first.[/red]")
         raise SystemExit(1)
 
     inventory = Inventory.load(inv_path)
@@ -534,9 +533,9 @@ def run_extraction(
             clients = [c for c in clients if c.folder_name in name_set]
             not_found = name_set - {c.folder_name for c in clients}
             if not_found:
-                console.print(f"  [yellow]Clients not found: {', '.join(sorted(not_found))}[/yellow]")
+                _progress.console.print(f"  [yellow]Clients not found: {', '.join(sorted(not_found))}[/yellow]")
 
-        console.print(f"  Extractable clients: {len(clients)}")
+        _progress.console.print(f"  Extractable clients: {len(clients)}")
 
         # Ensure output directories exist
         config.extractions_path.mkdir(parents=True, exist_ok=True)
@@ -545,7 +544,7 @@ def run_extraction(
         # If spreadsheet_only, just load existing extractions and generate
         if spreadsheet_only:
             extractions = _load_existing_extractions(config, clients)
-            console.print(f"  Loaded {len(extractions)} existing extractions")
+            _progress.console.print(f"  Loaded {len(extractions)} existing extractions")
             _generate_spreadsheet_wrapper(extractions, inventory, config)
             state.mark_completed("extraction")
             state.save(state_path)
@@ -553,7 +552,7 @@ def run_extraction(
 
         # Check for API key
         if not config.anthropic_api_key:
-            console.print("[red]Error: ANTHROPIC_API_KEY not set. Check .env file.[/red]")
+            _progress.console.print("[red]Error: ANTHROPIC_API_KEY not set. Check .env file.[/red]")
             raise SystemExit(1)
 
         api_client = anthropic.Anthropic(api_key=config.anthropic_api_key)
@@ -568,17 +567,17 @@ def run_extraction(
         if doc_clients and not skip_conversion:
             lo = find_libreoffice()
             if not lo:
-                console.print(
+                _progress.console.print(
                     f"  [yellow]Warning: LibreOffice not found. "
                     f"Skipping {len(doc_clients)} .doc clients.[/yellow]"
                 )
                 clients = [c for c in clients if c not in doc_clients]
             else:
-                console.print(f"  LibreOffice found: {lo}")
-                console.print(f"  .doc clients to convert: {len(doc_clients)}")
+                _progress.console.print(f"  LibreOffice found: {lo}")
+                _progress.console.print(f"  .doc clients to convert: {len(doc_clients)}")
 
         # ── Step 1: Extract text from all documents ──────────────────────
-        console.print("\n  Extracting text from documents...")
+        _progress.console.print("\n  Extracting text from documents...")
         texts: dict[str, tuple[str, str, str, bool]] = {}  # folder → (text, file, ext, converted)
         skipped_existing = 0
 
@@ -618,20 +617,20 @@ def run_extraction(
                         error=str(e),
                     )
                     ce.save(json_path)
-                    console.print(f"    [red]Error ({folder}): {e}[/red]")
+                    _progress.console.print(f"    [red]Error ({folder}): {e}[/red]")
 
         if skipped_existing:
-            console.print(f"  [dim]Skipped {skipped_existing} already extracted (use --force to re-extract)[/dim]")
+            _progress.console.print(f"  [dim]Skipped {skipped_existing} already extracted (use --force to re-extract)[/dim]")
 
         if not texts:
-            console.print("  [dim]No new documents to extract.[/dim]")
+            _progress.console.print("  [dim]No new documents to extract.[/dim]")
             extractions = _load_existing_extractions(config, clients)
             _generate_spreadsheet_wrapper(extractions, inventory, config)
             state.mark_completed("extraction")
             state.save(state_path)
             return extractions
 
-        console.print(f"  Documents to send to Claude API: {len(texts)}")
+        _progress.console.print(f"  Documents to send to Claude API: {len(texts)}")
 
         # ── Step 2: Call Claude API ──────────────────────────────────────
         extractions: list[ClientExtraction] = []
@@ -663,7 +662,7 @@ def run_extraction(
     except Exception as e:
         state.mark_failed("extraction", str(e))
         state.save(state_path)
-        console.print(f"\n[red]Phase 1 failed: {e}[/red]")
+        _progress.console.print(f"\n[red]Phase 1 failed: {e}[/red]")
         raise
 
 
@@ -706,7 +705,7 @@ def _run_sync_extraction(
                 ce.extraction = result
             except Exception as e:
                 ce.error = str(e)
-                console.print(f"    [red]Error ({folder}): {e}[/red]")
+                _progress.console.print(f"    [red]Error ({folder}): {e}[/red]")
 
             # Save per-client JSON
             json_path = config.extractions_path / f"{folder}.json"
@@ -790,7 +789,7 @@ def _run_batch_extraction(
         ce.save(json_path)
         extractions.append(ce)
 
-    console.print(f"\n  Batch results: {succeeded} succeeded, {failed} failed")
+    _progress.console.print(f"\n  Batch results: {succeeded} succeeded, {failed} failed")
     return extractions
 
 
@@ -811,8 +810,8 @@ def _load_existing_extractions(
                 ce = ClientExtraction.load(json_path)
                 extractions.append(ce)
             except Exception as e:
-                console.print(f"  [yellow]Upozorenje: ne mogu učitati {json_path.name}: {e}[/yellow]")
-                console.print(f"  [yellow]Warning: could not load {json_path.name}: {e}[/yellow]")
+                _progress.console.print(f"  [yellow]Upozorenje: ne mogu učitati {json_path.name}: {e}[/yellow]")
+                _progress.console.print(f"  [yellow]Warning: could not load {json_path.name}: {e}[/yellow]")
 
     return extractions
 
@@ -829,11 +828,11 @@ def _generate_spreadsheet_wrapper(
     from doc_pipeline.phases.spreadsheet import generate_spreadsheet
 
     if not extractions:
-        console.print("  [yellow]No extractions to write to spreadsheet.[/yellow]")
+        _progress.console.print("  [yellow]No extractions to write to spreadsheet.[/yellow]")
         return
 
     path = generate_spreadsheet(extractions, inventory, config)
-    console.print(f"\n  [green]Spreadsheet saved to: {path}[/green]")
+    _progress.console.print(f"\n  [green]Spreadsheet saved to: {path}[/green]")
 
 
 # ── Summary printing ─────────────────────────────────────────────────────────
@@ -876,12 +875,12 @@ def _print_summary(extractions: list[ClientExtraction]) -> None:
     if hrk_count:
         table.add_row("HRK contracts", f"[yellow]{hrk_count}[/yellow]")
 
-    console.print()
-    console.print(table)
+    _progress.console.print()
+    _progress.console.print(table)
 
     # Show errors if any
     if errors:
-        console.print("\n[bold red]Errors:[/bold red]")
+        _progress.console.print("\n[bold red]Errors:[/bold red]")
         for e in extractions:
             if e.error:
-                console.print(f"  {e.folder_name}: {e.error}")
+                _progress.console.print(f"  {e.folder_name}: {e.error}")

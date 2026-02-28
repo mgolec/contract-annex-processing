@@ -4,18 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rich.console import Console
-
 from doc_pipeline.config import PipelineConfig
 from doc_pipeline.models import Inventory
 from doc_pipeline.state import load_or_create_state
 from doc_pipeline.utils.fileops import copy_source_tree, discover_clients
+from doc_pipeline.utils import progress as _progress
 from doc_pipeline.utils.progress import (
     print_flagged_clients,
     print_inventory_summary,
 )
-
-console = Console()
 
 
 def run_setup(
@@ -39,16 +36,16 @@ def run_setup(
     dest_path = config.data_source_path
 
     # ── Validate source ───────────────────────────────────────────────────
-    console.print(f"\n[bold]Phase 0: Setup[/bold]")
-    console.print(f"  Source: {source_path}")
-    console.print(f"  Working copy: {dest_path}")
+    _progress.console.print(f"\n[bold]Phase 0: Setup[/bold]")
+    _progress.console.print(f"  Source: {source_path}")
+    _progress.console.print(f"  Working copy: {dest_path}")
 
     if not source_path.exists():
-        console.print(f"[red]Error: Source path does not exist: {source_path}[/red]")
+        _progress.console.print(f"[red]Error: Source path does not exist: {source_path}[/red]")
         raise SystemExit(1)
 
     if not source_path.is_dir():
-        console.print(f"[red]Error: Source path is not a directory: {source_path}[/red]")
+        _progress.console.print(f"[red]Error: Source path is not a directory: {source_path}[/red]")
         raise SystemExit(1)
 
     # ── Load/create run state ─────────────────────────────────────────────
@@ -59,31 +56,31 @@ def run_setup(
         # ── Step 1: Copy source tree ──────────────────────────────────────
         if scan_only:
             if not dest_path.exists():
-                console.print(
+                _progress.console.print(
                     "[red]Error: --scan-only specified but working copy "
                     f"does not exist: {dest_path}[/red]"
                 )
                 raise SystemExit(1)
-            console.print("  [dim]Skipping copy (--scan-only)[/dim]")
+            _progress.console.print("  [dim]Skipping copy (--scan-only)[/dim]")
         elif dry_run:
-            console.print("  [dim]Would copy source tree (--dry-run)[/dim]")
+            _progress.console.print("  [dim]Would copy source tree (--dry-run)[/dim]")
         else:
             if dest_path.exists() and not force:
-                console.print(
+                _progress.console.print(
                     f"\n[yellow]Working copy already exists at: {dest_path}[/yellow]"
                 )
-                console.print(
+                _progress.console.print(
                     "  Use [bold]--force[/bold] to overwrite, or "
                     "[bold]--scan-only[/bold] to re-scan without copying."
                 )
                 raise SystemExit(1)
 
-            console.print("\n  Copying source tree...")
+            _progress.console.print("\n  Copying source tree...")
             copied, skipped = copy_source_tree(source_path, dest_path, force=force)
-            console.print(f"  [green]Copied {copied} files[/green] (skipped {skipped})")
+            _progress.console.print(f"  [green]Copied {copied} files[/green] (skipped {skipped})")
 
         if dry_run:
-            console.print("  [dim]Would scan and classify files (--dry-run)[/dim]")
+            _progress.console.print("  [dim]Would scan and classify files (--dry-run)[/dim]")
             # Do NOT mark state as completed in dry-run mode
             return Inventory(
                 source_path=str(source_path),
@@ -91,7 +88,7 @@ def run_setup(
             )
 
         # ── Step 2: Scan, classify, dedup, chain ──────────────────────────
-        console.print("\n  Scanning and classifying files...")
+        _progress.console.print("\n  Scanning and classifying files...")
         clients = discover_clients(dest_path)
 
         # ── Step 3: Build and save inventory ──────────────────────────────
@@ -103,12 +100,12 @@ def run_setup(
 
         inventory_path = config.inventory_path
         inventory.save(inventory_path)
-        console.print(f"\n  [green]Inventory saved to: {inventory_path}[/green]")
+        _progress.console.print(f"\n  [green]Inventory saved to: {inventory_path}[/green]")
 
         # ── Step 4: Print summary ─────────────────────────────────────────
-        console.print()
+        _progress.console.print()
         print_inventory_summary(inventory)
-        console.print()
+        _progress.console.print()
         print_flagged_clients(inventory)
 
         state.mark_completed("setup")
@@ -121,5 +118,5 @@ def run_setup(
     except Exception as e:
         state.mark_failed("setup", str(e))
         state.save(state_path)
-        console.print(f"\n[red]Phase 0 failed: {e}[/red]")
+        _progress.console.print(f"\n[red]Phase 0 failed: {e}[/red]")
         raise

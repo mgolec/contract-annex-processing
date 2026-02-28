@@ -16,7 +16,7 @@ from rich.table import Table
 from doc_pipeline.config import PipelineConfig
 from doc_pipeline.models import ClientExtraction, Currency, PricingItem
 from doc_pipeline.utils.croatian import hr_date, hr_number, nfc
-from doc_pipeline.utils.progress import console
+from doc_pipeline.utils import progress as _progress
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ def read_approved_clients(
             if folder is None or folder not in approved:
                 # H16: Warn about unmatched prices
                 if new_price is not None or pct_increase is not None:
-                    console.print(
+                    _progress.console.print(
                         f"  [yellow]Upozorenje: nova cijena za '{client_name_str}' "
                         f"ne odgovara nijednom odobrenom klijentu[/yellow]"
                     )
@@ -554,7 +554,7 @@ def _match_prices(
     # Warn about unmatched new prices
     if unmatched_prices:
         for p in unmatched_prices:
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Upozorenje: nova cijena za '{p.service_name}' "
                 f"nema odgovarajuću stavku[/yellow]"
             )
@@ -782,8 +782,8 @@ def print_preview(
             "[yellow]Yes[/yellow]" if is_hrk else "No",
         )
 
-    console.print(table)
-    console.print(
+    _progress.console.print(table)
+    _progress.console.print(
         f"\n[bold]{len(generation_plan)}[/bold] annexes will be generated."
     )
 
@@ -843,7 +843,7 @@ def run_generation(
     """
     # ── Validate prerequisites ──────────────────────────────────────
     if not config.spreadsheet_path.exists():
-        console.print(
+        _progress.console.print(
             "[red]Control spreadsheet not found.[/red] "
             f"Expected: {config.spreadsheet_path}\n"
             "Run 'pipeline extract' first."
@@ -851,7 +851,7 @@ def run_generation(
         return []
 
     if not config.template_path.exists():
-        console.print(
+        _progress.console.print(
             "[red]Template not found.[/red] "
             f"Expected: {config.template_path}\n"
             "Run 'python scripts/create_template.py' first."
@@ -859,11 +859,11 @@ def run_generation(
         return []
 
     # ── Read approved clients from spreadsheet ──────────────────────
-    console.print("[bold]Reading control spreadsheet...[/bold]")
+    _progress.console.print("[bold]Reading control spreadsheet...[/bold]")
     approved_list = read_approved_clients(config.spreadsheet_path, config=config)
 
     if not approved_list:
-        console.print(
+        _progress.console.print(
             "[yellow]No approved clients found.[/yellow] "
             'Mark clients as "Odobreno" in the Status column (I) of the spreadsheet.'
         )
@@ -879,7 +879,7 @@ def run_generation(
                     filtered.append(ac)
                     break
         if not filtered:
-            console.print(
+            _progress.console.print(
                 f"[yellow]None of the specified clients ({', '.join(client_names)}) "
                 f"are approved in the spreadsheet.[/yellow]"
             )
@@ -897,7 +897,7 @@ def run_generation(
     # Scan both output and source directories for current-year annexes
     if start_number is None:
         seq = _detect_next_annex_number(config.annexes_output_path, config.source_path)
-        console.print(f"  Auto-detected next annex number: {seq}")
+        _progress.console.print(f"  Auto-detected next annex number: {seq}")
     else:
         seq = start_number
 
@@ -907,7 +907,7 @@ def run_generation(
     for ac in approved_list:
         json_path = config.extractions_path / f"{ac.folder_name}.json"
         if not json_path.exists():
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Skipping {ac.folder_name}: "
                 f"no extraction JSON found[/yellow]"
             )
@@ -916,7 +916,7 @@ def run_generation(
 
         extraction = ClientExtraction.load(json_path)
         if not extraction.extraction or not extraction.extraction.pricing_items:
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Skipping {ac.folder_name}: "
                 f"no pricing items in extraction[/yellow]"
             )
@@ -924,7 +924,7 @@ def run_generation(
             continue
 
         if not ac.new_prices:
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Skipping {ac.folder_name}: "
                 f"no new prices in spreadsheet[/yellow]"
             )
@@ -936,29 +936,29 @@ def run_generation(
         seq += 1
 
     if not generation_plan:
-        console.print("[yellow]No clients ready for annex generation.[/yellow]")
+        _progress.console.print("[yellow]No clients ready for annex generation.[/yellow]")
         return []
 
     if skipped:
-        console.print(
+        _progress.console.print(
             f"\n[dim]Skipped {len(skipped)} clients: "
             f"{', '.join(skipped)}[/dim]"
         )
 
     # ── Show preview ────────────────────────────────────────────────
     hrk_rate = Decimal(str(config.currency.hrk_to_eur_rate))
-    console.print()
+    _progress.console.print()
     print_preview(generation_plan, hrk_rate)
 
     if dry_run:
-        console.print("\n[dim]Dry run — no files generated.[/dim]")
+        _progress.console.print("\n[dim]Dry run — no files generated.[/dim]")
         return []
 
     # ── Ask for confirmation ────────────────────────────────────────
-    console.print()
-    proceed = console.input("[bold]Proceed with generation? [y/N]: [/bold]")
+    _progress.console.print()
+    proceed = _progress.console.input("[bold]Proceed with generation? [y/N]: [/bold]")
     if proceed.strip().lower() not in ("y", "yes"):
-        console.print("[dim]Cancelled.[/dim]")
+        _progress.console.print("[dim]Cancelled.[/dim]")
         return []
 
     # ── Generate annexes ────────────────────────────────────────────
@@ -987,9 +987,9 @@ def run_generation(
             if not val or any(p in str(val) for p in _PLACEHOLDER_PATTERNS):
                 ctx_warnings.append(f"  Missing/placeholder: {ctx_field} = '{val}'")
         if ctx_warnings:
-            console.print(f"  [yellow]Upozorenje za {ac.client_name}:[/yellow]")
+            _progress.console.print(f"  [yellow]Upozorenje za {ac.client_name}:[/yellow]")
             for w in ctx_warnings:
-                console.print(f"    [yellow]{w}[/yellow]")
+                _progress.console.print(f"    [yellow]{w}[/yellow]")
 
         # Output path
         if output_to_source:
@@ -999,7 +999,7 @@ def run_generation(
         out_file = out_dir / f"Aneks_{annex_number}.docx"
 
         if out_file.exists() and not force:
-            console.print(
+            _progress.console.print(
                 f"  [yellow]Skipping {ac.folder_name}: "
                 f"output already exists ({out_file.name}). Use --force to overwrite.[/yellow]"
             )
@@ -1018,10 +1018,10 @@ def run_generation(
             rel_path = out_file.relative_to(config.output_path)
         except ValueError:
             rel_path = out_file.relative_to(config.source_path)
-        console.print(f"  [green]Generated:[/green] {rel_path}")
+        _progress.console.print(f"  [green]Generated:[/green] {rel_path}")
 
     output_location = config.source_path if output_to_source else config.annexes_output_path
-    console.print(
+    _progress.console.print(
         f"\n[bold green]Done![/bold green] "
         f"{len(generated)} annexes generated in {output_location}"
     )
